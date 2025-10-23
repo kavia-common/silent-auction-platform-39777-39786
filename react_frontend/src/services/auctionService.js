@@ -1,0 +1,244 @@
+import supabase from '../lib/supabaseClient';
+
+/**
+ * Utility to generate a simple event code from a name.
+ * Note: In a real app, prefer generating this in the database with uniqueness guarantees.
+ */
+function generateEventCode(name = '') {
+  const slug = (name || 'event').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 8);
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `${slug}${rand}`;
+}
+
+// PUBLIC_INTERFACE
+export async function createEvent(name) {
+  /** Create a new auction event with a generated code. Returns { data, error }. */
+  const code = generateEventCode(name);
+  // TODO: Ensure unique constraint on 'code' in Supabase and handle conflicts server-side.
+  const { data, error } = await supabase
+    .from('events')
+    .insert([{ name, code, status: 'active' }])
+    .select('*')
+    .single();
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function sendHostMagicLink(email, eventId) {
+  /**
+   * Sends a passwordless magic link to the host's email.
+   * The email redirect includes eventId so we can route the host to their dashboard.
+   * Returns { data, error } from Supabase Auth.
+   *
+   * NOTE: Make sure you set the Site URL in Supabase Auth settings to allow redirect.
+   */
+  if (!email) {
+    return { data: null, error: new Error('Email is required') };
+  }
+
+  const siteOrigin =
+    process.env.REACT_APP_SITE_URL ||
+    (typeof window !== 'undefined' ? window.location.origin : '');
+  const redirectUrl = `${siteOrigin}/host/callback${
+    eventId ? `?eventId=${encodeURIComponent(eventId)}` : ''
+  }`;
+
+  // TODO: Configure Supabase email templates/policies as needed.
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: redirectUrl
+    }
+  });
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function getEventByCode(code) {
+  /** Fetch an event by its public code. Returns { data, error }. */
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('code', code)
+    .single();
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function getEventByName(name) {
+  /** Fetch an event by name (exact match). Returns { data, error }. */
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('name', name)
+    .maybeSingle();
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function addItem(eventId, item) {
+  /**
+   * Add a new auction item to an event.
+   * item: { title, description, starting_bid }
+   */
+  const payload = {
+    event_id: eventId,
+    title: item.title,
+    description: item.description || '',
+    starting_bid: Number(item.starting_bid || 0)
+  };
+  const { data, error } = await supabase.from('items').insert([payload]).select('*').single();
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function listItems(eventId) {
+  /** List items for an event. Returns { data, error }. */
+  const { data, error } = await supabase
+    .from('items')
+    .select('*')
+    .eq('event_id', eventId)
+    .order('created_at', { ascending: true });
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function deleteItem(itemId) {
+  /** Delete an item by id. Returns { data, error }. */
+  const { data, error } = await supabase.from('items').delete().eq('id', itemId);
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function listBidsForItem(itemId) {
+  /** List bids for an item ordered by amount desc. Returns { data, error }. */
+  const { data, error } = await supabase
+    .from('bids')
+    .select('*')
+    .eq('item_id', itemId)
+    .order('amount', { ascending: false });
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function getHighBid(itemId) {
+  /** Fetch the highest bid for an item. Returns { data, error }. */
+  const { data, error } = await supabase
+    .from('bids')
+    .select('id, amount, bidder_name, created_at')
+    .eq('item_id', itemId)
+    .order('amount', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function placeBid({ eventId, itemId, amount, bidderName }) {
+  /**
+   * Place a bid with client-side validation:
+   * - amount must be a positive number
+   * - amount must be greater than current high bid
+   *
+   * NOTE: Server/database-side checks must be implemented for real integrity.
+   */
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return { data: null, error: new Error('Bid amount must be a positive number') };
+  }
+
+  // Basic client-side validation against current high bid
+  const { data: high, error: highErr } = await getHighBid(itemId);
+  if (highErr) {
+    // Non-fatal; proceed but warn via console
+    // eslint-disable-next-line no-console
+    console.warn('Could not fetch high bid for validation:', highErr.message);
+  }
+  if (high && numeric <= Number(high.amount || 0)) {
+    return { data: null, error: new Error(`Bid must be higher than current high bid (${high.amount})`) };
+  }
+
+  const payload = {
+    event_id: eventId,
+    item_id: itemId,
+    amount: numeric,
+    bidder_name: bidderName || 'Anonymous'
+  };
+
+  const { data, error } = await supabase.from('bids').insert([payload]).select('*').single();
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export function subscribeToItems(eventId, onChange) {
+  /**
+   * Subscribe to realtime changes for items in an event.
+   * Returns an unsubscribe function.
+   *
+   * Requires Realtime enabled and Row Level Security policies configured in Supabase.
+   */
+  const channel = supabase
+    .channel(`items-changes-${eventId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'items', filter: `event_id=eq.${eventId}` },
+      (payload) => {
+        if (typeof onChange === 'function') onChange(payload);
+      }
+    )
+    .subscribe((status) => {
+      // eslint-disable-next-line no-console
+      console.debug('Items realtime status:', status);
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// PUBLIC_INTERFACE
+export function subscribeToBids(itemId, onChange) {
+  /**
+   * Subscribe to realtime changes for bids on a specific item.
+   * Returns an unsubscribe function.
+   */
+  const channel = supabase
+    .channel(`bids-changes-item-${itemId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'bids', filter: `item_id=eq.${itemId}` },
+      (payload) => {
+        if (typeof onChange === 'function') onChange(payload);
+      }
+    )
+    .subscribe((status) => {
+      // eslint-disable-next-line no-console
+      console.debug('Bids realtime status:', status);
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+export default {
+  createEvent,
+  sendHostMagicLink,
+  getEventByCode,
+  getEventByName,
+  addItem,
+  listItems,
+  deleteItem,
+  placeBid,
+  listBidsForItem,
+  getHighBid,
+  subscribeToItems,
+  subscribeToBids
+};
