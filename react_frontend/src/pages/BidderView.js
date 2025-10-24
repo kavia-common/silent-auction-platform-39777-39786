@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import ItemCard from '../components/ItemCard';
 import {
@@ -18,6 +18,7 @@ export default function BidderView() {
    * Bidder page: join by event code, view items, place bids.
    * Realtime updates for new items and bids.
    * Consumes bidder context from localStorage and keeps it in sync on name changes.
+   * Shows a green success toast after a successful bid insert.
    */
   const { eventCode } = useParams();
   const [eventId, setEventId] = useState(null);
@@ -25,6 +26,10 @@ export default function BidderView() {
   const [highBids, setHighBids] = useState({});
   const [error, setError] = useState('');
   const [name, setName] = useState('');
+  const [toast, setToast] = useState(null); // { message }
+
+  // To track current subscriptions on bids when items change
+  const bidUnsubsRef = useRef([]);
 
   // Load name from localStorage if present (handle reloads gracefully)
   useEffect(() => {
@@ -39,11 +44,34 @@ export default function BidderView() {
     }
   }, []);
 
-  const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
+  const normalizeItem = (it) => {
+    // Support both "name" and "title" fields gracefully
+    const title = typeof it.title === 'string' && it.title.trim()
+      ? it.title
+      : (typeof it.name === 'string' ? it.name : '');
+    return { ...it, title };
+  };
+
+  const sortedItems = useMemo(
+    () => items.map(normalizeItem).slice().sort((a, b) => (a.id > b.id ? 1 : -1)),
+    [items]
+  );
 
   const loadHighBid = async (itemId) => {
     const { data } = await getHighBid(itemId);
     setHighBids((prev) => ({ ...prev, [itemId]: data?.amount || null }));
+  };
+
+  const attachBidRealtime = (itemsList) => {
+    // Clear previous
+    bidUnsubsRef.current.forEach((fn) => fn && fn());
+    bidUnsubsRef.current = [];
+
+    // Subscribe to each item's bids
+    (itemsList || []).forEach((it) => {
+      const unsub = subscribeToBids(it.id, () => loadHighBid(it.id));
+      bidUnsubsRef.current.push(unsub);
+    });
   };
 
   const loadItems = async (evtId) => {
@@ -52,8 +80,11 @@ export default function BidderView() {
       setError(err.message || 'Failed to load items');
       return;
     }
-    setItems(data || []);
-    (data || []).forEach((it) => loadHighBid(it.id));
+    const list = (data || []);
+    setItems(list);
+    list.forEach((it) => loadHighBid(it.id));
+    // Update bid realtime subscriptions
+    attachBidRealtime(list);
   };
 
   useEffect(() => {
@@ -82,16 +113,10 @@ export default function BidderView() {
 
       const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
 
-      // Subscribe to bids for each item to update highBid in near realtime
-      const unsubFunctions = [];
-      (items || []).forEach((it) => {
-        const unsub = subscribeToBids(it.id, () => loadHighBid(it.id));
-        unsubFunctions.push(unsub);
-      });
-
       return () => {
         unsubItems();
-        unsubFunctions.forEach((fn) => fn && fn());
+        bidUnsubsRef.current.forEach((fn) => fn && fn());
+        bidUnsubsRef.current = [];
       };
     };
 
@@ -117,12 +142,23 @@ export default function BidderView() {
     }
   };
 
-  const handleBid = (itemId) => async (amount) => {
+  const showToast = (message) => {
+    setToast({ message });
+    // Auto hide
+    setTimeout(() => setToast(null), 2200);
+  };
+
+  const handleBid = (item) => async (amount) => {
     if (!eventId) {
       throw new Error('Event not loaded');
     }
-    const { error: bidErr } = await placeBid({ eventId, itemId, amount, bidderName: name.trim() });
+    const { error: bidErr } = await placeBid({ eventId, itemId: item.id, amount, bidderName: name.trim() });
     if (bidErr) throw new Error(bidErr.message || 'Failed to place bid');
+
+    // On success: show toast and gently refresh the item high bid if realtime isn't immediate
+    showToast(`You have bid this ‘${item.title || item.name || 'item'}’`);
+    // Fallback refetch for robustness even with realtime
+    loadHighBid(item.id);
   };
 
   return (
@@ -143,7 +179,33 @@ export default function BidderView() {
           <div className="hint">Enter a name or leave blank to bid anonymously.</div>
         </div>
       </div>
+
       {error ? <div className="alert alert--error">{error}</div> : null}
+
+      {/* Success toast */}
+      {toast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            right: 16,
+            bottom: 16,
+            background: 'rgba(16,185,129,0.12)',
+            border: '1px solid rgba(16,185,129,0.35)',
+            color: '#065f46',
+            padding: '10px 12px',
+            borderRadius: 10,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+            transform: 'translateY(0)',
+            transition: 'transform 200ms ease, opacity 200ms ease',
+            zIndex: 60
+          }}
+        >
+          {toast.message}
+        </div>
+      ) : null}
+
       <div className="grid grid--cards">
         {sortedItems.map((it) => (
           <ItemCard
@@ -151,7 +213,7 @@ export default function BidderView() {
             item={it}
             highBid={highBids[it.id] ?? null}
             allowBid
-            onBid={handleBid(it.id)}
+            onBid={handleBid(it)}
           />
         ))}
       </div>
