@@ -23,8 +23,11 @@ function generateEventCode(name = '') {
  */
 function getEventStatus(evt) {
   if (!evt) return 'open';
-  if (typeof evt.status === 'string') return evt.status;
+  // Prefer string status if present
+  if (typeof evt.status === 'string' && evt.status.trim()) return evt.status;
+  // Fallback to boolean is_open (older/newer schema variant)
   if (typeof evt.is_open === 'boolean') return evt.is_open ? 'open' : 'closed';
+  // Default to open to avoid blocking the UI if both are absent
   return 'open';
 }
 
@@ -33,17 +36,48 @@ function getEventStatus(evt) {
  * Ensure your Supabase schema has: id uuid primary key default gen_random_uuid()
  * This function intentionally omits 'id' from the insert payload.
  */
+let hasIsOpenCache = null;
+async function ensureEventsIsOpenPresenceKnown() {
+  // Fast path
+  if (typeof hasIsOpenCache === 'boolean') return hasIsOpenCache;
+  // Probe one row for shape; if no rows, use a select with limited columns and check error details
+  const { data, error } = await supabase
+    .from('events')
+    .select('id, is_open')
+    .limit(1)
+    .maybeSingle();
+
+  // If we got data and 'is_open' in it (could be undefined if column missing)
+  if (data && Object.prototype.hasOwnProperty.call(data, 'is_open')) {
+    hasIsOpenCache = true;
+    return true;
+  }
+
+  // If error mentions 'column' or 'is_open' missing, infer false; otherwise conservatively assume false
+  if (error && /column .*is_open.* does not exist/i.test(error.message || '')) {
+    hasIsOpenCache = false;
+    return false;
+  }
+
+  // If no rows returned, we cannot observe shape; try a safer detection by querying information_schema via RPC is not available on anon.
+  // Fall back to false (omit is_open in writes) to avoid runtime errors; the UI still works by using status text.
+  hasIsOpenCache = false;
+  return false;
+}
+
 // PUBLIC_INTERFACE
 export async function createEvent(name, customCode) {
   /** Create a new auction event with a generated code. Returns { data, error }. */
   const code = (customCode && customCode.trim()) ? customCode.trim() : generateEventCode(name);
 
   // Build payload without 'id' to allow DB default to generate it
-  // Default to 'open' if using status text; also add is_open for graceful fallback.
-  const payload = { name, code, status: 'open', is_open: true };
-  // Defensive: strip any accidental 'id' field
-  if ('id' in payload) {
-    delete payload.id;
+  const payload = { name, code, status: 'open' };
+  // Conditionally include is_open if the column exists
+  try {
+    const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
+    if (hasIsOpen) payload.is_open = true;
+  } catch {
+    // ignore detection errors; omit is_open to be safe
   }
 
   // Insert and return created event
@@ -96,7 +130,7 @@ export async function getEventByCode(code) {
    */
   const { data, error } = await supabase
     .from('events')
-    .select('*')
+    .select('id, name, code, status, is_open, created_at')
     .eq('code', code)
     .limit(1)
     .maybeSingle();
@@ -325,15 +359,21 @@ export function subscribeToEvent(eventId, onChange) {
   };
 }
 
-// PUBLIC_INTERFACE
+ // PUBLIC_INTERFACE
 export async function updateAuctionStatus(eventId, desired) {
   /**
    * Update auction open/closed status.
    * desired: 'open' | 'closed'
-   * Attempts to update both text status and boolean is_open for backward compatibility.
+   * Attempts to update string status and, if supported by schema, boolean is_open.
    */
   const isOpen = desired === 'open';
-  const updates = { status: desired, is_open: isOpen };
+  const updates = { status: desired };
+  try {
+    const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
+    if (hasIsOpen) updates.is_open = isOpen;
+  } catch {
+    // ignore detection errors; skip is_open
+  }
   const { data, error } = await supabase
     .from('events')
     .update(updates)
@@ -348,7 +388,7 @@ export async function getEventById(eventId) {
   /** Fetch a single event by id for host view. */
   const { data, error } = await supabase
     .from('events')
-    .select('*')
+    .select('id, name, code, status, is_open, created_at')
     .eq('id', eventId)
     .limit(1)
     .maybeSingle();

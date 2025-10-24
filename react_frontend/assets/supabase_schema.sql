@@ -9,6 +9,8 @@ create table if not exists public.events (
   name text not null,
   code text unique not null,
   status text default 'active',
+  -- also include a boolean flag for compatibility with certain clients
+  is_open boolean default true not null,
   created_at timestamptz default now()
 );
 

@@ -19,6 +19,22 @@ The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in deve
    - Add indexes and permissive demo Row Level Security policies
    - Patch events.id to ensure UUID defaults and PK exist (prevents "null value in column id of relation events")
 
+### Important: Auction open/closed flag
+The frontend supports both a text status column (status: 'open' | 'closed' | 'active') and a boolean column (is_open). If your events table does not yet have is_open, apply this patch:
+
+- File: assets/sql_patches/events_is_open_patch.sql
+- What it does: Adds events.is_open boolean DEFAULT true NOT NULL (idempotent) and normalizes the column shape if it exists with a wrong type/nullability.
+
+Quick verification query:
+select column_name, data_type, column_default, is_nullable
+from information_schema.columns
+where table_schema = 'public' and table_name = 'events' and column_name = 'is_open';
+
+Expected:
+- data_type: boolean
+- is_nullable: NO
+- column_default: true
+
 ### Troubleshooting: items.id NOT NULL violation
 If you see an error like: null value in column "id" of relation "items" violates not-null constraint, your items table likely does not have a default UUID generator on id.
 

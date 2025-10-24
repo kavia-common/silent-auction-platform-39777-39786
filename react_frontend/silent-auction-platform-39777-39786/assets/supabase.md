@@ -95,6 +95,18 @@ create index if not exists bids_item_id_idx on public.bids(item_id);
 create index if not exists bids_event_id_idx on public.bids(event_id);
 ```
 
+### Events is_open patch
+If you see "column events.is_open does not exist" in the Host dashboard when opening/closing auctions, run the idempotent patch:
+
+- File: assets/sql_patches/events_is_open_patch.sql
+- Effect: Adds public.events.is_open boolean DEFAULT true NOT NULL and normalizes shape if it exists differently.
+
+Verification:
+select column_name, data_type, column_default, is_nullable
+from information_schema.columns
+where table_schema = 'public' and table_name = 'events' and column_name = 'is_open';
+Expect: boolean, default true, not null.
+
 ## Realtime Configuration
 
 Enable Realtime for the following tables:
