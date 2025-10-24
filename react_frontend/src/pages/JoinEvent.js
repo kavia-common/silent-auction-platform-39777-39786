@@ -1,0 +1,88 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getEventByCode, getEventByName } from '../services/auctionService';
+
+// PUBLIC_INTERFACE
+export default function JoinEvent() {
+  /**
+   * Join Event page: allows participants to enter a join code or event name,
+   * then routes to the bidding page for that event.
+   */
+  const [input, setInput] = useState('');
+  const [mode, setMode] = useState('code'); // 'code' or 'name'
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const navigate = useNavigate();
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    const value = input.trim();
+    if (!value) {
+      setError(`Event ${mode} is required`);
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === 'code') {
+        // Navigate directly by code; BidderView will validate and load items.
+        navigate(`/event/${encodeURIComponent(value)}`);
+      } else {
+        // Lookup by exact name to resolve code, then navigate
+        const { data, error: err } = await getEventByName(value);
+        if (err || !data) {
+          throw new Error(err?.message || 'Event not found');
+        }
+        navigate(`/event/${encodeURIComponent(data.code)}`);
+      }
+    } catch (e2) {
+      setError(e2?.message || 'Unable to join the event');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="container page">
+      <div className="card">
+        <h2 className="card__title">Join Event</h2>
+        <p className="card__text">Enter the event code or exact event name to join.</p>
+        <div className="item-card__meta">
+          <button
+            className={`btn ${mode === 'code' ? 'btn--primary' : ''}`}
+            onClick={() => setMode('code')}
+            type="button"
+          >
+            Use Code
+          </button>
+          <button
+            className={`btn ${mode === 'name' ? 'btn--primary' : ''}`}
+            onClick={() => setMode('name')}
+            type="button"
+          >
+            Use Name
+          </button>
+        </div>
+        <form onSubmit={onSubmit} className="form">
+          <div className="field">
+            <label htmlFor="join-input" className="field__label">
+              {mode === 'code' ? 'Event code' : 'Event name'}
+            </label>
+            <input
+              id="join-input"
+              className="field__input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={mode === 'code' ? 'e.g., gala20251234' : 'e.g., Charity Gala 2025'}
+              required
+            />
+          </div>
+          <button className="btn btn--secondary" type="submit" disabled={busy}>
+            {busy ? 'Joining...' : 'Join'}
+          </button>
+        </form>
+        {error ? <div className="alert alert--error">{error}</div> : null}
+      </div>
+    </div>
+  );
+}

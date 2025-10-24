@@ -16,20 +16,18 @@ function generateEventCode(name = '') {
  * This function intentionally omits 'id' from the insert payload.
  */
 // PUBLIC_INTERFACE
-export async function createEvent(name) {
+export async function createEvent(name, customCode) {
   /** Create a new auction event with a generated code. Returns { data, error }. */
-  const code = generateEventCode(name);
+  const code = (customCode && customCode.trim()) ? customCode.trim() : generateEventCode(name);
 
   // Build payload without 'id' to allow DB default to generate it
   const payload = { name, code, status: 'active' };
   // Defensive: strip any accidental 'id' field
-  // (e.g., if a caller mistakenly passes an object with id in the future)
   if ('id' in payload) {
-    // eslint-disable-next-line no-param-reassign
     delete payload.id;
   }
 
-  // TODO: Ensure unique constraint on 'code' in Supabase and handle conflicts server-side.
+  // Insert and return created event
   const { data, error } = await supabase
     .from('events')
     .insert([payload])
