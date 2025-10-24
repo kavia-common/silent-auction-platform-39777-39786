@@ -17,6 +17,18 @@ function generateEventCode(name = '') {
 }
 
 /**
+ * Get normalized event status:
+ * - Prefer text status field (e.g., 'open'|'closed'|'active'), else fallback to boolean is_open,
+ *   else default to 'open' for backwards compatibility.
+ */
+function getEventStatus(evt) {
+  if (!evt) return 'open';
+  if (typeof evt.status === 'string') return evt.status;
+  if (typeof evt.is_open === 'boolean') return evt.is_open ? 'open' : 'closed';
+  return 'open';
+}
+
+/**
  * NOTE: The database must generate the primary key for events.id (UUID default).
  * Ensure your Supabase schema has: id uuid primary key default gen_random_uuid()
  * This function intentionally omits 'id' from the insert payload.
@@ -27,7 +39,8 @@ export async function createEvent(name, customCode) {
   const code = (customCode && customCode.trim()) ? customCode.trim() : generateEventCode(name);
 
   // Build payload without 'id' to allow DB default to generate it
-  const payload = { name, code, status: 'active' };
+  // Default to 'open' if using status text; also add is_open for graceful fallback.
+  const payload = { name, code, status: 'open', is_open: true };
   // Defensive: strip any accidental 'id' field
   if ('id' in payload) {
     delete payload.id;
@@ -200,31 +213,44 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
   /**
    * Place a bid with client-side validation:
    * - amount must be a positive number
-   * - amount must be greater than current high bid
+   * - amount must exceed current price (max of starting_bid and highest bid)
    *
-   * NOTE: Server/database-side checks must be implemented for real integrity.
+   * NOTE: Server/database-side checks must be implemented for true integrity.
    */
   const numeric = Number(amount);
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return { data: null, error: new Error('Bid amount must be a positive number') };
   }
 
-  // Basic client-side validation against current high bid
+  // Fetch the item to know its starting_bid
+  const { data: itemRow, error: itemErr } = await supabase
+    .from('items')
+    .select('id, starting_bid')
+    .eq('id', itemId)
+    .limit(1)
+    .maybeSingle();
+
+  if (itemErr) {
+    return { data: null, error: new Error(itemErr.message || 'Unable to validate bid') };
+  }
+
+  const starting = Number(itemRow?.starting_bid || 0);
   const { data: high, error: highErr } = await getHighBid(itemId);
   if (highErr) {
     // Non-fatal; proceed but warn via console
     // eslint-disable-next-line no-console
     console.warn('Could not fetch high bid for validation:', highErr.message);
   }
-  if (high && numeric <= Number(high.amount || 0)) {
-    return { data: null, error: new Error(`Bid must be higher than current high bid (${high.amount})`) };
+  const current = Math.max(starting, Number(high?.amount || 0));
+  if (numeric <= current) {
+    return { data: null, error: new Error(`Bid must be greater than current price (${current})`) };
   }
 
   const payload = {
     event_id: eventId,
     item_id: itemId,
     amount: numeric,
-    bidder_name: bidderName || 'Anonymous'
+    bidder_name: (bidderName || 'Anonymous').trim() || 'Anonymous'
   };
 
   const { data, error } = await supabase.from('bids').insert([payload]).select('*').single();
@@ -248,10 +274,7 @@ export function subscribeToItems(eventId, onChange) {
         if (typeof onChange === 'function') onChange(payload);
       }
     )
-    .subscribe((status) => {
-      // eslint-disable-next-line no-console
-      console.debug('Items realtime status:', status);
-    });
+    .subscribe();
 
   return () => {
     supabase.removeChannel(channel);
@@ -273,14 +296,69 @@ export function subscribeToBids(itemId, onChange) {
         if (typeof onChange === 'function') onChange(payload);
       }
     )
-    .subscribe((status) => {
-      // eslint-disable-next-line no-console
-      console.debug('Bids realtime status:', status);
-    });
+    .subscribe();
 
   return () => {
     supabase.removeChannel(channel);
   };
+}
+
+// PUBLIC_INTERFACE
+export function subscribeToEvent(eventId, onChange) {
+  /**
+   * Subscribe to realtime updates for a single event (e.g., status changes).
+   * Returns an unsubscribe function.
+   */
+  const channel = supabase
+    .channel(`event-${eventId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'events', filter: `id=eq.${eventId}` },
+      (payload) => {
+        if (typeof onChange === 'function') onChange(payload);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// PUBLIC_INTERFACE
+export async function updateAuctionStatus(eventId, desired) {
+  /**
+   * Update auction open/closed status.
+   * desired: 'open' | 'closed'
+   * Attempts to update both text status and boolean is_open for backward compatibility.
+   */
+  const isOpen = desired === 'open';
+  const updates = { status: desired, is_open: isOpen };
+  const { data, error } = await supabase
+    .from('events')
+    .update(updates)
+    .eq('id', eventId)
+    .select('*')
+    .single();
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function getEventById(eventId) {
+  /** Fetch a single event by id for host view. */
+  const { data, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('id', eventId)
+    .limit(1)
+    .maybeSingle();
+  return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export function getNormalizedEventStatus(evt) {
+  /** Return normalized status string for UI logic. */
+  return getEventStatus(evt);
 }
 
 export default {
@@ -297,5 +375,9 @@ export default {
   listBidsForItem,
   getHighBid,
   subscribeToItems,
-  subscribeToBids
+  subscribeToBids,
+  subscribeToEvent,
+  updateAuctionStatus,
+  getEventById,
+  getNormalizedEventStatus
 };

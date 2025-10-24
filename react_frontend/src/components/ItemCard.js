@@ -38,6 +38,8 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
     }
   };
 
+  const disabledStyle = !allowBid ? { opacity: 0.6, pointerEvents: 'none' } : undefined;
+
   return (
     <div className="card item-card">
       <div className="card__header">
@@ -56,24 +58,23 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
         </span>
       </div>
 
-      {allowBid && (
-        <div className="item-card__actions">
-          <div className="field">
-            <label htmlFor={`bid-${item.id}`} className="field__label">Your bid</label>
-            <input
-              id={`bid-${item.id}`}
-              type="number"
-              className="field__input"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              min="0"
-              step="1"
-              placeholder="Enter amount"
-            />
-          </div>
-          <button className="btn btn--primary" onClick={handleBid}>Bid</button>
+      <div className="item-card__actions" style={disabledStyle}>
+        <div className="field">
+          <label htmlFor={`bid-${item.id}`} className="field__label">Your bid</label>
+          <input
+            id={`bid-${item.id}`}
+            type="number"
+            className="field__input"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            min="0"
+            step="1"
+            placeholder={allowBid ? 'Enter amount' : 'Bidding disabled'}
+            disabled={!allowBid}
+          />
         </div>
-      )}
+        <button className="btn btn--primary" onClick={handleBid} disabled={!allowBid}>Bid</button>
+      </div>
       {error ? <div className="alert alert--error">{error}</div> : null}
     </div>
   );

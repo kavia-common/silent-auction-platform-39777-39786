@@ -7,7 +7,9 @@ import {
   listItems,
   placeBid,
   subscribeToBids,
-  subscribeToItems
+  subscribeToItems,
+  subscribeToEvent,
+  getNormalizedEventStatus
 } from '../services/auctionService';
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
@@ -22,6 +24,7 @@ export default function BidderView() {
    */
   const { eventCode } = useParams();
   const [eventId, setEventId] = useState(null);
+  const [eventRow, setEventRow] = useState(null);
   const [items, setItems] = useState([]);
   const [highBids, setHighBids] = useState({});
   const [error, setError] = useState('');
@@ -30,6 +33,7 @@ export default function BidderView() {
 
   // To track current subscriptions on bids when items change
   const bidUnsubsRef = useRef([]);
+  const eventUnsubRef = useRef(null);
 
   // Load name from localStorage if present (handle reloads gracefully)
   useEffect(() => {
@@ -56,6 +60,9 @@ export default function BidderView() {
     () => items.map(normalizeItem).slice().sort((a, b) => (a.id > b.id ? 1 : -1)),
     [items]
   );
+
+  const auctionStatus = getNormalizedEventStatus(eventRow);
+  const isClosed = auctionStatus === 'closed';
 
   const loadHighBid = async (itemId) => {
     const { data } = await getHighBid(itemId);
@@ -98,6 +105,8 @@ export default function BidderView() {
         return;
       }
       setEventId(evt.id);
+      setEventRow(evt);
+
       // Persist/refresh context including possibly updated eventId
       try {
         const raw = localStorage.getItem(LS_JOIN_CONTEXT);
@@ -112,9 +121,16 @@ export default function BidderView() {
       await loadItems(evt.id);
 
       const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
+      const unsubEvent = subscribeToEvent(evt.id, async () => {
+        // Refetch event row to reflect status changes
+        const refreshed = await getEventByCode(eventCode);
+        if (refreshed?.data) setEventRow(refreshed.data);
+      });
+      eventUnsubRef.current = unsubEvent;
 
       return () => {
         unsubItems();
+        if (eventUnsubRef.current) eventUnsubRef.current();
         bidUnsubsRef.current.forEach((fn) => fn && fn());
         bidUnsubsRef.current = [];
       };
@@ -152,11 +168,14 @@ export default function BidderView() {
     if (!eventId) {
       throw new Error('Event not loaded');
     }
+    if (isClosed) {
+      throw new Error('Auction is closed. Bidding is disabled.');
+    }
     const { error: bidErr } = await placeBid({ eventId, itemId: item.id, amount, bidderName: name.trim() });
     if (bidErr) throw new Error(bidErr.message || 'Failed to place bid');
 
     // On success: show toast and gently refresh the item high bid if realtime isn't immediate
-    showToast(`You have bid this ‘${item.title || item.name || 'item'}’`);
+    showToast(`You have bid on “${item.title || item.name || 'item'}”`);
     // Fallback refetch for robustness even with realtime
     loadHighBid(item.id);
   };
@@ -176,11 +195,18 @@ export default function BidderView() {
               placeholder="Anonymous"
             />
           </div>
-          <div className="hint">Enter a name or leave blank to bid anonymously.</div>
+          <div className="hint">
+            {isClosed ? 'This auction is closed. You can no longer place bids.' : 'Enter a name or leave blank to bid anonymously.'}
+          </div>
         </div>
       </div>
 
       {error ? <div className="alert alert--error">{error}</div> : null}
+      {!error && isClosed ? (
+        <div className="alert" role="status" aria-live="polite" style={{ marginTop: 12 }}>
+          The auction is currently closed. You can view items and final prices, but bidding is disabled.
+        </div>
+      ) : null}
 
       {/* Success toast */}
       {toast ? (
@@ -206,13 +232,19 @@ export default function BidderView() {
         </div>
       ) : null}
 
+      {sortedItems.length === 0 ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <p className="card__text">No items yet. Please check back soon.</p>
+        </div>
+      ) : null}
+
       <div className="grid grid--cards">
         {sortedItems.map((it) => (
           <ItemCard
             key={it.id}
             item={it}
             highBid={highBids[it.id] ?? null}
-            allowBid
+            allowBid={!isClosed}
             onBid={handleBid(it)}
           />
         ))}

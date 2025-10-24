@@ -57,7 +57,7 @@ export default function JoinEventName() {
 
   return (
     <div className="container page">
-      <div className="card">
+      <div className="card" style={{ background: 'linear-gradient(120deg, rgba(37,99,235,0.06), rgba(255,255,255,1))' }}>
         <h2 className="card__title">Your Name (Optional)</h2>
         <p className="card__text">You can bid anonymously, or add a name to show with your bids.</p>
         <form onSubmit={onNext} className="form">

@@ -191,6 +191,17 @@ body {
   border-color: rgba(37,99,235,0.6);
   box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
 }
+.field__input::placeholder {
+  color: #9ca3af;
+}
+.field__input:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.btn[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 .btn {
   height: 40px;
@@ -199,7 +210,7 @@ body {
   border-radius: 10px;
   cursor: pointer;
   font-weight: 600;
-  transition: transform var(--transition), box-shadow var(--transition), background var(--transition), color var(--transition);
+  transition: transform var(--transition), box-shadow var(--transition), background var(--transition), color var(--transition), opacity var(--transition);
 }
 
 .btn:active {

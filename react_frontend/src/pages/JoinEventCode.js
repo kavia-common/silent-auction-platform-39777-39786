@@ -39,7 +39,7 @@ export default function JoinEventCode() {
 
   return (
     <div className="container page">
-      <div className="card">
+      <div className="card" style={{ background: 'linear-gradient(120deg, rgba(37,99,235,0.06), rgba(255,255,255,1))' }}>
         <h2 className="card__title">Join by Event Code</h2>
         <p className="card__text">Enter the event code provided by the host.</p>
         <form onSubmit={onSubmit} className="form">

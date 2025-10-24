@@ -47,8 +47,12 @@ Important: The frontend never passes id when inserting events. The database gene
 Enable replication (Realtime) for tables:
 - public.items
 - public.bids
+- public.events (for auction open/close status updates)
 
-The app subscribes to these using Supabase Realtime channels.
+The app subscribes to these using Supabase Realtime channels:
+- Items list per event (insert/update/delete)
+- Bids per item (insert/update/delete to reflect current price)
+- Single event row (status changes open/closed)
 
 ## Auth (Optional Magic Link for Host)
 
