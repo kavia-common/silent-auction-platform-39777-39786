@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getEventByCode, getEventByName } from '../services/auctionService';
+import { getEventByName } from '../services/auctionService';
 
 // PUBLIC_INTERFACE
 export default function JoinEvent() {
   /**
-   * Join Event page: allows participants to enter a join code or event name,
-   * then routes to the bidding page for that event.
+   * Join Event page: Find by code or name; navigate to bidder view.
    */
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState('code'); // 'code' or 'name'
+  const [mode, setMode] = useState('code');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -25,10 +24,8 @@ export default function JoinEvent() {
     setBusy(true);
     try {
       if (mode === 'code') {
-        // Navigate directly by code; BidderView will validate and load items.
         navigate(`/event/${encodeURIComponent(value)}`);
       } else {
-        // Lookup by exact name to resolve code, then navigate
         const { data, error: err } = await getEventByName(value);
         if (err || !data) {
           throw new Error(err?.message || 'Event not found');

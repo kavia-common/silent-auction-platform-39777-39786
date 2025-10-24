@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 // PUBLIC_INTERFACE
 export default function Home() {
   /**
-   * Landing page with two primary actions: Create and Join.
-   * Buttons navigate to dedicated pages for each flow.
+   * Minimal landing page with two buttons: Create and Join.
    */
   const navigate = useNavigate();
 
