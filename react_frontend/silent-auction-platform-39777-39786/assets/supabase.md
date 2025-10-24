@@ -50,6 +50,27 @@ create table if not exists public.events (
   created_at timestamp with time zone default now()
 );
 
+-- If you encounter "null value in column \"id\" of relation \"events\" violates not-null constraint",
+-- your table may be missing the default or PK. Apply this patch:
+-- Ensure pgcrypto (or use gen_random_uuid via pgcrypto) is enabled:
+create extension if not exists "pgcrypto";
+-- Add default generator and primary key if missing:
+alter table public.events
+  alter column id type uuid using id::uuid,
+  alter column id set not null,
+  alter column id set default gen_random_uuid();
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.events'::regclass
+      and contype = 'p'
+  ) then
+    alter table public.events add primary key (id);
+  end if;
+end $$;
+
 -- Items table
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),

@@ -10,14 +10,29 @@ function generateEventCode(name = '') {
   return `${slug}${rand}`;
 }
 
+/**
+ * NOTE: The database must generate the primary key for events.id (UUID default).
+ * Ensure your Supabase schema has: id uuid primary key default gen_random_uuid()
+ * This function intentionally omits 'id' from the insert payload.
+ */
 // PUBLIC_INTERFACE
 export async function createEvent(name) {
   /** Create a new auction event with a generated code. Returns { data, error }. */
   const code = generateEventCode(name);
+
+  // Build payload without 'id' to allow DB default to generate it
+  const payload = { name, code, status: 'active' };
+  // Defensive: strip any accidental 'id' field
+  // (e.g., if a caller mistakenly passes an object with id in the future)
+  if ('id' in payload) {
+    // eslint-disable-next-line no-param-reassign
+    delete payload.id;
+  }
+
   // TODO: Ensure unique constraint on 'code' in Supabase and handle conflicts server-side.
   const { data, error } = await supabase
     .from('events')
-    .insert([{ name, code, status: 'active' }])
+    .insert([payload])
     .select('*')
     .single();
 
