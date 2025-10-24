@@ -21,7 +21,7 @@ export default function Home() {
           </button>
         </div>
         <div className="hint" style={{ marginTop: 12 }}>
-          Magic Link hosting is supported. You can add host email during creation.
+          Optional: email yourself a magic link to manage the event securely.
         </div>
       </div>
     </div>

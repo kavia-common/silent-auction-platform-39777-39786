@@ -76,7 +76,7 @@ export default function JoinEventName() {
             {busy ? 'Continuing...' : 'Next'}
           </button>
         </form>
-        {error ? <div className="alert alert--error">{error}</div> : null}
+        {error ? <div className="alert alert--error" role="alert">{error}</div> : null}
       </div>
     </div>
   );

@@ -41,7 +41,7 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
   const disabledStyle = !allowBid ? { opacity: 0.6, pointerEvents: 'none' } : undefined;
 
   return (
-    <div className="card item-card">
+    <div className="card item-card" style={{ transition: 'transform var(--transition), box-shadow var(--transition)' }}>
       <div className="card__header">
         <h3 className="card__title">{displayTitle}</h3>
         {onDelete && (

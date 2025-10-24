@@ -37,6 +37,7 @@ export default function HostDashboard() {
 
   const [closedItems, setClosedItems] = useState({});
   const [winners, setWinners] = useState([]);
+  const [confetti, setConfetti] = useState([]);
 
   // Analytics
   const [tableRows, setTableRows] = useState([]);
@@ -288,6 +289,16 @@ export default function HostDashboard() {
         const { data } = await getWinnersForEvent(eventId);
         setWinners(Array.isArray(data) ? data : []);
       }
+      // Trigger lightweight confetti burst
+      const dots = Array.from({ length: 18 }).map((_, i) => ({
+        id: i,
+        left: `${50 + (Math.random() * 30 - 15)}%`,
+        top: '10%',
+        bg: [ 'var(--primary)', 'var(--secondary)', '#60A5FA', '#FCD34D' ][i % 4],
+        delay: `${Math.random() * 120}ms`
+      }));
+      setConfetti(dots);
+      setTimeout(() => setConfetti([]), 900);
     } catch (e) {
       setError(e?.message || 'Failed to close auction');
     } finally {
@@ -325,6 +336,24 @@ export default function HostDashboard() {
         {eventRow?.code ? <> · Join code: <strong>{eventRow.code}</strong></> : null}
       </p>
 
+      {/* Confetti overlay */}
+      {confetti.length > 0 && (
+        <div className="confetti-layer" aria-hidden="true">
+          {confetti.map(dot => (
+            <div
+              key={dot.id}
+              className="confetti-dot"
+              style={{
+                left: dot.left,
+                top: dot.top,
+                background: dot.bg,
+                animationDelay: dot.delay
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card__header">
           <h3 className="card__title">Auction Controls</h3>
@@ -334,7 +363,7 @@ export default function HostDashboard() {
           <button className="btn btn--primary" onClick={handleOpen} disabled={updatingStatus || !isClosed}>Open Auction</button>
           <button className="btn btn--secondary" onClick={handleClose} disabled={updatingStatus || isClosed}>Close Auction</button>
         </div>
-        <div className="hint" style={{ marginTop: 8 }}>
+        <div className="hint" style={{ marginTop: 8 }} role="status" aria-live="polite">
           Opening sets events.status='open' and events.is_open=true (if available). Closing sets events.status='closed' and events.is_open=false (if available).
         </div>
       </div>
@@ -400,9 +429,21 @@ export default function HostDashboard() {
               <span className="badge">Auto-updates</span>
             </div>
             {series && series.length > 0 ? (
-              <SimpleChart type="area" data={series} width={680} height={160} color="var(--primary)" bg="linear-gradient(120deg, rgba(37,99,235,0.04), rgba(255,255,255,1))" ariaLabel="Bids over time" />
+              <SimpleChart
+                type="area"
+                data={series}
+                width={680}
+                height={180}
+                color="var(--primary)"
+                bg="linear-gradient(120deg, rgba(37,99,235,0.04), rgba(255,255,255,1))"
+                ariaLabel="Bids over time"
+              />
             ) : (
-              <p className="card__text">No recent bids yet. Activity will appear here in real time.</p>
+              <div>
+                <div className="skeleton skeleton--title" />
+                <div className="skeleton skeleton--block" style={{ marginTop: 10 }} />
+                <p className="card__text" style={{ marginTop: 10 }}>No recent bids yet. Activity will appear here in real time.</p>
+              </div>
             )}
           </div>
         </div>
@@ -414,9 +455,21 @@ export default function HostDashboard() {
               <span className="badge">Auto-updates</span>
             </div>
             {tableRows && tableRows.length > 0 && tableRows.some(r => r.count > 0) ? (
-              <SimpleChart type="bar" data={tableRows.map((r, idx) => ({ x: idx, y: r.count }))} width={680} height={160} color="var(--secondary)" bg="linear-gradient(120deg, rgba(245,158,11,0.05), rgba(255,255,255,1))" ariaLabel="Bids per item" />
+              <SimpleChart
+                type="bar"
+                data={tableRows.map((r, idx) => ({ x: idx, y: r.count }))}
+                width={680}
+                height={180}
+                color="var(--secondary)"
+                bg="linear-gradient(120deg, rgba(245,158,11,0.05), rgba(255,255,255,1))"
+                ariaLabel="Bids per item"
+              />
             ) : (
-              <p className="card__text">No bids yet. Bars will appear as bids are placed.</p>
+              <div>
+                <div className="skeleton skeleton--title" />
+                <div className="skeleton skeleton--block" style={{ marginTop: 10 }} />
+                <p className="card__text" style={{ marginTop: 10 }}>No bids yet. Bars will appear as bids are placed.</p>
+              </div>
             )}
           </div>
         </div>
@@ -456,7 +509,13 @@ export default function HostDashboard() {
       <div className="grid" style={{ marginTop: 16 }}>
         <div className="col">
           <h3 className="section__title">Items</h3>
-          {loading ? <div className="hint">Loading items…</div> : null}
+          {loading ? (
+            <div className="card" aria-busy="true" aria-live="polite">
+              <div className="skeleton skeleton--title" />
+              <div style={{ marginTop: 10 }} className="skeleton skeleton--text" />
+              <div style={{ marginTop: 12 }} className="skeleton skeleton--block" />
+            </div>
+          ) : null}
           {!loading && sortedItems.length === 0 ? (
             <div className="card">
               <p className="card__text">No items yet. Add your first item above.</p>

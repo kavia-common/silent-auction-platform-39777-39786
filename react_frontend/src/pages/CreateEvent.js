@@ -91,7 +91,7 @@ export default function CreateEvent() {
             {loading ? 'Creating...' : 'Create'}
           </button>
         </form>
-        {error ? <div className="alert alert--error">{error}</div> : null}
+        {error ? <div className="alert alert--error" role="alert" aria-live="assertive">{error}</div> : null}
       </div>
     </div>
   );

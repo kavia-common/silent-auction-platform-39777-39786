@@ -59,7 +59,7 @@ export default function JoinEventCode() {
             {busy ? 'Verifying...' : 'Join'}
           </button>
         </form>
-        {error ? <div className="alert alert--error">{error}</div> : null}
+        {error ? <div className="alert alert--error" role="alert">{error}</div> : null}
       </div>
     </div>
   );

@@ -102,7 +102,7 @@ export default function SimpleChart({
         const y = yScale(t);
         return (
           <line
-            key={i}
+            key={`grid-${i}`}
             x1={padding.left}
             x2={width - padding.right}
             y1={y}
@@ -118,20 +118,28 @@ export default function SimpleChart({
         <text x={6} y={yScale(maxY) + 4} fontSize="10" fill="var(--muted)">{Number(maxY).toLocaleString()}</text>
       ) : null}
 
-      {/* Bars or line/area */}
+      {/* Bars or line/area with subtle transitions */}
       {type === 'bar' ? (
         <>
           {bars.map((b, i) => (
-            <rect key={i} x={b.x} y={b.y} width={b.width} height={b.height} fill={color} opacity="0.9" />
+            <rect
+              key={`bar-${i}`}
+              x={b.x}
+              y={b.y}
+              width={b.width}
+              height={b.height}
+              fill={color}
+              opacity="0.9"
+            />
           ))}
         </>
       ) : (
         <>
           {type === 'area' && areaD ? (
-            <path d={areaD} fill={color} opacity="0.12" />
+            <path d={areaD} fill={color} opacity="0.12" style={{ transition: 'd 240ms ease' }} />
           ) : null}
           {pathD ? (
-            <path d={pathD} stroke={color} strokeWidth="2" fill="none" />
+            <path d={pathD} stroke={color} strokeWidth="2" fill="none" style={{ transition: 'd 240ms ease' }} />
           ) : null}
         </>
       )}

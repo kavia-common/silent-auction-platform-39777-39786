@@ -31,6 +31,8 @@ export default function BidderView() {
   const [error, setError] = useState('');
   const [name, setName] = useState('');
   const [toast, setToast] = useState(null);
+  const [showWinnerBanner, setShowWinnerBanner] = useState(false);
+  const [confetti, setConfetti] = useState([]); // array of confetti dots
   const [winners, setWinners] = useState([]);
 
   const bidUnsubsRef = useRef([]);
@@ -63,6 +65,15 @@ export default function BidderView() {
 
   const auctionStatus = getNormalizedEventStatus(eventRow);
   const isClosed = auctionStatus === 'closed';
+
+  // Trigger a lightweight success banner when winners become available
+  useEffect(() => {
+    if (isClosed && winners && winners.length > 0) {
+      setShowWinnerBanner(true);
+      const t = setTimeout(() => setShowWinnerBanner(false), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [isClosed, winners]);
 
   const loadHighBid = async (itemId) => {
     const { data } = await getHighBid(itemId);
@@ -245,7 +256,9 @@ export default function BidderView() {
       eventId, itemId: item.id, amount, bidderName: name.trim()
     });
     if (bidErr) throw new Error(bidErr.message || 'Failed to place bid');
-    showToast(`You have bid on “${item.title || item.name || 'item'}”`);
+    const formatted = Number(amount).toLocaleString();
+    const iName = item.title || item.name || 'item';
+    showToast(`Bid placed: ${iName} · ${formatted}`);
     loadHighBid(item.id);
   };
 
@@ -270,10 +283,16 @@ export default function BidderView() {
         </div>
       </div>
 
-      {error ? <div className="alert alert--error">{error}</div> : null}
+      {error ? <div className="alert alert--error" role="alert" aria-live="assertive">{error}</div> : null}
       {!error && isClosed ? (
         <div className="alert" role="status" aria-live="polite" style={{ marginTop: 12 }}>
           The auction is closed. Final results are shown below when available; bidding is disabled.
+        </div>
+      ) : null}
+
+      {showWinnerBanner ? (
+        <div className="alert alert--success" role="status" aria-live="polite">
+          Winners are available. Scroll to see the results.
         </div>
       ) : null}
 
@@ -305,31 +324,18 @@ export default function BidderView() {
       )}
 
       {toast ? (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            position: 'fixed',
-            right: 16,
-            bottom: 16,
-            background: 'rgba(16,185,129,0.12)',
-            border: '1px solid rgba(16,185,129,0.35)',
-            color: '#065f46',
-            padding: '10px 12px',
-            borderRadius: 10,
-            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
-            transform: 'translateY(0)',
-            transition: 'transform 200ms ease, opacity 200ms ease',
-            zIndex: 60
-          }}
-        >
-          {toast.message}
+        <div className="toast" role="status" aria-live="assertive">
+          <strong style={{ display: 'block', marginBottom: 2 }}>Success</strong>
+          <span>{toast.message}</span>
         </div>
       ) : null}
 
       {sortedItems.length === 0 ? (
         <div className="card" style={{ marginTop: 16 }}>
-          <p className="card__text">No items yet. Please check back soon.</p>
+          <div className="skeleton skeleton--title" />
+          <div style={{ marginTop: 8 }} className="skeleton skeleton--text" />
+          <div style={{ marginTop: 14 }} className="skeleton skeleton--block" />
+          <p className="card__text" style={{ marginTop: 12 }}>No items yet. Please check back soon.</p>
         </div>
       ) : null}
 
