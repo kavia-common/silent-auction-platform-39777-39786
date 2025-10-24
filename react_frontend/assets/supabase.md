@@ -60,10 +60,9 @@ Important: The frontend never passes id when inserting events. The database gene
 
 ## Anonymous Session IDs (bidder_session_id)
 
-The frontend now generates a stable anonymous clientId (UUID v4) per browser and includes it in every bid as bids.bidder_session_id. To enable this, add the column to public.bids:
+The frontend generates a stable anonymous clientId (UUID v4) per browser and includes it in every bid as bids.bidder_session_id.
 
-SQL (idempotent patch):
-
+Inline SQL (idempotent) to add the column to public.bids:
 ```sql
 do $$
 begin
@@ -77,14 +76,13 @@ begin
   end if;
 end $$;
 
--- Optional: index for analytics or querying by session
 create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
 ```
 
 Notes:
 - The column is nullable and optional; existing rows remain valid.
-- Frontend falls back gracefully: if the column does not exist yet, the first insert attempt will retry without the field to avoid runtime errors (but you should add the column to capture session identity).
-- The clientId is stored in localStorage as auction.clientId.
+- Frontend behavior is graceful: if the column does not exist, the first insert will fail and is immediately retried without the field so bidding still works. Add the column to capture session identity.
+- The clientId is stored in localStorage under auction.clientId.
 
 ## Realtime
 

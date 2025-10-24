@@ -61,7 +61,29 @@ create index if not exists magic_links_event_id_idx on public.magic_links(event_
 -- token unique is already set as a unique constraint above
 ```
 
-## 3) Performance Indexes for Items and Bids
+## 3) Anonymous Bidder Session IDs
+
+Add a nullable text column to store an anonymous clientId from the browser on each bid.
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bids'
+      and column_name = 'bidder_session_id'
+  ) then
+    alter table public.bids add column bidder_session_id text;
+  end if;
+end $$;
+
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+```
+
+Note: Frontend includes bidder_session_id on insert and gracefully retries without if the column is missing.
+
+## 4) Performance Indexes for Items and Bids
 
 ```sql
 -- Ensure tables exist

@@ -243,6 +243,23 @@ export async function getHighBid(itemId) {
   return { data, error };
 }
 
+/**
+ * Inline SQL to add bidder_session_id if your DB is missing the column (run in Supabase SQL Editor):
+ *
+ * do $$
+ * begin
+ *   if not exists (
+ *     select 1 from information_schema.columns
+ *     where table_schema = 'public'
+ *       and table_name = 'bids'
+ *       and column_name = 'bidder_session_id'
+ *   ) then
+ *     alter table public.bids add column bidder_session_id text;
+ *   end if;
+ * end $$;
+ * create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+ */
+
 // PUBLIC_INTERFACE
 export async function placeBid({ eventId, itemId, amount, bidderName }) {
   /**
@@ -250,8 +267,9 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
    * - amount must be a positive number
    * - amount must exceed current price (max of starting_bid and highest bid)
    *
-   * NOTE: Server/database-side checks must be implemented for true integrity.
-   * Adds bidder_session_id for anonymous session tracking.
+   * Server/database-side checks should be implemented for integrity.
+   * Always attempts to include bidder_session_id for anonymous session tracking and gracefully
+   * retries without the field if the DB column is missing (older schema).
    */
   const numeric = Number(amount);
   if (!Number.isFinite(numeric) || numeric <= 0) {
@@ -290,9 +308,6 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     item_id: itemId,
     amount: numeric,
     bidder_name: (bidderName || 'Anonymous').trim() || 'Anonymous',
-    // This column may not yet exist in older schemas; DB will ignore unknown fields only if column exists.
-    // We include it and document adding the column; if absent, Supabase will return an error.
-    // To handle gracefully, we attempt insert with and without the column (fallback below).
     bidder_session_id: clientId
   };
 

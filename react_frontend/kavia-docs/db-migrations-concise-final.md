@@ -158,6 +158,7 @@ create index if not exists bids_event_item_created_at_desc_idx
 
 Add a nullable text column to store the anonymous clientId from the browser on each bid. This enables grouping bids by device/session without authentication.
 
+Inline, idempotent SQL:
 ```sql
 do $$
 begin
@@ -176,7 +177,7 @@ create index if not exists bids_bidder_session_id_idx on public.bids(bidder_sess
 
 Frontend behavior:
 - A UUID v4 clientId is generated and persisted in localStorage (auction.clientId).
-- All bid inserts include bidder_session_id when the column exists; if absent, the app retries without it to remain functional.
+- All bid inserts include bidder_session_id; if the column is missing, the app catches the “column ... does not exist” error and automatically retries without the field so bids still succeed. You should add the column to capture session identity.
 
 ## 5) Supabase Realtime Tuning (<1s)
 

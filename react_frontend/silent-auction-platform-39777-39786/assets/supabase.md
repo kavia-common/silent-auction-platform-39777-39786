@@ -89,10 +89,12 @@ create table if not exists public.bids (
   item_id uuid not null references public.items(id) on delete cascade,
   amount numeric not null check (amount > 0),
   bidder_name text default 'Anonymous',
+  bidder_session_id text, -- optional anonymous session identifier (frontend includes it)
   created_at timestamp with time zone default now()
 );
 create index if not exists bids_item_id_idx on public.bids(item_id);
 create index if not exists bids_event_id_idx on public.bids(event_id);
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
 ```
 
 ### Events is_open patch
@@ -106,6 +108,27 @@ select column_name, data_type, column_default, is_nullable
 from information_schema.columns
 where table_schema = 'public' and table_name = 'events' and column_name = 'is_open';
 Expect: boolean, default true, not null.
+
+## Anonymous Bidder Session IDs
+
+The frontend assigns an anonymous per-browser clientId and includes it in bids as bidder_session_id. If your public.bids does not have this column, add it with:
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bids'
+      and column_name = 'bidder_session_id'
+  ) then
+    alter table public.bids add column bidder_session_id text;
+  end if;
+end $$;
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+```
+
+The app gracefully retries inserts without this field if the column is missing, but you should add it to capture session identity.
 
 ## Realtime Configuration
 
