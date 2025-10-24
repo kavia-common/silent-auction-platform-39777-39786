@@ -22,7 +22,9 @@ export default function App() {
           <Route path="/join" element={<JoinEvent />} />
           <Route path="/host/:eventId" element={<HostDashboard />} />
           <Route path="/host/callback" element={<MagicLinkCallback />} />
+          {/* Bidder routes: support both /event/:eventCode and /bid/:eventCode */}
           <Route path="/event/:eventCode" element={<BidderView />} />
+          <Route path="/bid/:eventCode" element={<BidderView />} />
           <Route path="*" element={
             <div className="container page">
               <div className="card">

@@ -10,11 +10,14 @@ import {
   subscribeToItems
 } from '../services/auctionService';
 
+const LS_JOIN_CONTEXT = 'auction.joinContext';
+
 // PUBLIC_INTERFACE
 export default function BidderView() {
   /**
    * Bidder page: join by event code, view items, place bids.
    * Realtime updates for new items and bids.
+   * Consumes bidder context from localStorage and keeps it in sync on name changes.
    */
   const { eventCode } = useParams();
   const [eventId, setEventId] = useState(null);
@@ -22,6 +25,19 @@ export default function BidderView() {
   const [highBids, setHighBids] = useState({});
   const [error, setError] = useState('');
   const [name, setName] = useState('');
+
+  // Load name from localStorage if present
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_JOIN_CONTEXT);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.bidderName) setName(parsed.bidderName);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
 
@@ -43,6 +59,7 @@ export default function BidderView() {
   useEffect(() => {
     const init = async () => {
       setError('');
+      // Verify event by code (guards against stale/invalid context)
       const { data: evt, error: evtErr } = await getEventByCode(eventCode);
       if (evtErr || !evt) {
         const msg = evtErr?.message || 'Event not found. Check the code and try again.';
@@ -50,6 +67,17 @@ export default function BidderView() {
         return;
       }
       setEventId(evt.id);
+      // Persist/refresh context including possibly updated eventId
+      try {
+        const raw = localStorage.getItem(LS_JOIN_CONTEXT);
+        const existing = raw ? JSON.parse(raw) : {};
+        const updated = { ...existing, eventId: evt.id, eventCode: evt.code, bidderName: existing?.bidderName || name || '' };
+        localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
+        if (!name && updated.bidderName) setName(updated.bidderName);
+      } catch {
+        /* ignore storage errors */
+      }
+
       await loadItems(evt.id);
 
       const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
@@ -76,6 +104,19 @@ export default function BidderView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventCode]);
 
+  // Keep bidder name in localStorage synced
+  const onChangeName = (e) => {
+    const nm = e.target.value;
+    setName(nm);
+    try {
+      const raw = localStorage.getItem(LS_JOIN_CONTEXT);
+      const existing = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify({ ...existing, bidderName: nm }));
+    } catch {
+      /* ignore */
+    }
+  };
+
   const handleBid = (itemId) => async (amount) => {
     if (!eventId) {
       throw new Error('Event not loaded');
@@ -95,7 +136,7 @@ export default function BidderView() {
               id="name"
               className="field__input"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={onChangeName}
               placeholder="Anonymous"
             />
           </div>

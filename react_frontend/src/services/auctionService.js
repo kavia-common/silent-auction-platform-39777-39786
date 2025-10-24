@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabaseClient';
 /**
  * Utility to generate a simple event code from a name.
  * Note: In a real app, prefer generating this in the database with uniqueness guarantees.
+ *
+ * Participant handling:
+ * - This demo stores bidder identity client-side and writes it into bids.bidder_name on placeBid.
+ * - The database includes an optional participants table for future enhancement (e.g., named attendees).
  */
 function generateEventCode(name = '') {
   const slug = (name || 'event').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 8);
