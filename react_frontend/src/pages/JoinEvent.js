@@ -27,8 +27,16 @@ export default function JoinEvent() {
         navigate(`/event/${encodeURIComponent(value)}`);
       } else {
         const { data, error: err } = await getEventByName(value);
-        if (err || !data) {
-          throw new Error(err?.message || 'Event not found');
+        if (err) {
+          // Supabase may return a generic message if multiple rows were found when using maybeSingle.
+          // Provide a friendlier UI message.
+          const msg = /multiple|coerce|single json/i.test(err.message)
+            ? 'Multiple events share this name. Please use the unique event code.'
+            : err.message || 'Unable to find event';
+          throw new Error(msg);
+        }
+        if (!data) {
+          throw new Error('Event not found. Please check the exact name or use the event code.');
         }
         navigate(`/event/${encodeURIComponent(data.code)}`);
       }

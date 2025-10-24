@@ -70,23 +70,31 @@ export async function sendHostMagicLink(email, eventId) {
 
 // PUBLIC_INTERFACE
 export async function getEventByCode(code) {
-  /** Fetch an event by its public code. Returns { data, error }. */
+  /** Fetch an event by its public code. Returns { data, error }.
+   * Uses .maybeSingle() to avoid "Cannot coerce the result to a single JSON object"
+   * if the database contains unexpected duplicates. We also .limit(1) for safety.
+   */
   const { data, error } = await supabase
     .from('events')
     .select('*')
     .eq('code', code)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function getEventByName(name) {
-  /** Fetch an event by name (exact match). Returns { data, error }. */
+  /** Fetch an event by name (exact match). Returns { data, error }.
+   * Uses .maybeSingle() because names may not be unique in the database.
+   * If multiple rows match, Supabase returns an error; callers should surface a friendly message.
+   */
   const { data, error } = await supabase
     .from('events')
     .select('*')
     .eq('name', name)
+    .limit(1)
     .maybeSingle();
 
   return { data, error };

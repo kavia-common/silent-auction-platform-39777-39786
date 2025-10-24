@@ -45,7 +45,8 @@ export default function BidderView() {
       setError('');
       const { data: evt, error: evtErr } = await getEventByCode(eventCode);
       if (evtErr || !evt) {
-        setError(evtErr?.message || 'Event not found. Check the code and try again.');
+        const msg = evtErr?.message || 'Event not found. Check the code and try again.';
+        setError(msg);
         return;
       }
       setEventId(evt.id);
