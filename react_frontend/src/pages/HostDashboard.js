@@ -80,6 +80,7 @@ export default function HostDashboard() {
       const list = Array.isArray(data) ? data : [];
       setItems(list);
       list.forEach((it) => refreshHighBid(it.id));
+      // Important: initial analytics fetch before subscribing
       await refreshAnalytics();
     } catch (e) {
       setError(e?.message || 'Network error while loading items');
@@ -106,9 +107,34 @@ export default function HostDashboard() {
   };
 
   useEffect(() => {
-    loadEvent();
-    loadItems();
+    // Initial fetches BEFORE wiring realtime
+    loadEvent().then(async () => {
+      await loadItems();
+      // If already closed on mount, try to fetch winners immediately with short retry/backoff
+      const latest = await getEventById(eventId);
+      const latestStatus = getNormalizedEventStatus(latest?.data || null);
+      if (latestStatus === 'closed') {
+        const attempts = [0, 300, 300];
+        let loaded = false;
+        for (let i = 0; i < attempts.length; i++) {
+          if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+          const { data, error: wErr } = await getWinnersForEvent(eventId);
+          if (!wErr) {
+            setWinners(Array.isArray(data) ? data : []);
+            loaded = true;
+            break;
+          }
+          // eslint-disable-next-line no-console
+          console.warn('Winners fetch retry (host, mount):', wErr?.message);
+        }
+        if (!loaded) {
+          const { data } = await getWinnersForEvent(eventId);
+          setWinners(Array.isArray(data) ? data : []);
+        }
+      }
+    });
 
+    // Then attach realtime subscriptions
     const unsubscribeItems = subscribeToItems(eventId, () => {
       loadItems();
     });
@@ -118,7 +144,24 @@ export default function HostDashboard() {
       const latest = await getEventById(eventId);
       const latestStatus = getNormalizedEventStatus(latest?.data || null);
       if (latestStatus === 'closed') {
-        refreshWinnersIfClosed(eventId);
+        // short retry/backoff after status close to allow DB to settle
+        const attempts = [0, 300, 300];
+        let loaded = false;
+        for (let i = 0; i < attempts.length; i++) {
+          if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+          const { data, error: wErr } = await getWinnersForEvent(eventId);
+          if (!wErr) {
+            setWinners(Array.isArray(data) ? data : []);
+            loaded = true;
+            break;
+          }
+          // eslint-disable-next-line no-console
+          console.warn('Winners fetch retry (host, event sub):', wErr?.message);
+        }
+        if (!loaded) {
+          const { data } = await getWinnersForEvent(eventId);
+          setWinners(Array.isArray(data) ? data : []);
+        }
       } else {
         setWinners([]);
       }

@@ -3,6 +3,13 @@ import { getOrCreateClientId } from '../lib/clientId';
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
 
+// Small, safe logger to help diagnose production preview issues without noise
+const log = {
+  info: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.info('[auction]', ...args); } catch {} } },
+  warn: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.warn('[auction]', ...args); } catch {} } },
+  error: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.error('[auction]', ...args); } catch {} } },
+};
+
 /**
  * Utility to generate a simple event code from a name.
  * Note: In a real app, prefer generating this in the database with uniqueness guarantees.
@@ -93,9 +100,8 @@ async function withShortRetry(fn) {
     }
     try {
       last = await fn();
-      // If call returns an object with error field, continue retry when error is present
       if (!last || (last && last.error)) {
-        // continue to next attempt
+        // continue
       } else {
         return last;
       }
@@ -217,7 +223,8 @@ export async function listBidsForItem(itemId) {
       .from('bids')
       .select('*')
       .eq('item_id', itemId)
-      .order('amount', { ascending: false });
+      .order('amount', { ascending: false })
+      .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
   return { data, error };
 }
@@ -259,8 +266,7 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
   const starting = Number(itemRow?.starting_bid || 0);
   const { data: high, error: highErr } = await getHighBid(itemId);
   if (highErr) {
-    // eslint-disable-next-line no-console
-    console.warn('Could not fetch high bid for validation:', highErr.message);
+    log.warn('Could not fetch high bid for validation:', highErr.message);
   }
   const current = Math.max(starting, Number(high?.amount || 0));
   if (numeric <= current) {
@@ -378,7 +384,9 @@ export function getNormalizedEventStatus(evt) {
 export async function getWinnersForEvent(eventId) {
   /** Winners list per item for a given eventId using highest bid per item; ties -> earliest created_at. */
   if (!eventId) return { data: [], error: null };
+  log.info('Fetching winners for event', eventId);
 
+  // Load items scoped to event first to avoid cross-event joins
   const { data: itemsData, error: itemsErr } = await withShortRetry(() =>
     supabase
       .from('items')
@@ -386,19 +394,27 @@ export async function getWinnersForEvent(eventId) {
       .eq('event_id', eventId)
       .order('created_at', { ascending: true })
   );
-  if (itemsErr) return { data: null, error: itemsErr };
+  if (itemsErr) {
+    log.warn('Items query failed for winners:', itemsErr.message);
+    return { data: null, error: itemsErr };
+  }
   const items = itemsData || [];
   if (items.length === 0) return { data: [], error: null };
 
+  // Fetch bids only for those items; order ensures first occurrence is winner (amount desc, created_at asc)
+  const itemIds = items.map(i => i.id);
   const { data: bidsData, error: bidsErr } = await withShortRetry(() =>
     supabase
       .from('bids')
       .select('item_id, id, amount, bidder_name, bidder_session_id, created_at')
-      .in('item_id', items.map(i => i.id))
+      .in('item_id', itemIds)
       .order('amount', { ascending: false })
       .order('created_at', { ascending: true })
   );
-  if (bidsErr) return { data: null, error: bidsErr };
+  if (bidsErr) {
+    log.warn('Bids query failed for winners:', bidsErr.message);
+    return { data: null, error: bidsErr };
+  }
 
   const winnerByItem = {};
   for (const b of bidsData || []) {
@@ -443,10 +459,15 @@ export async function getWinnerForItem(itemId) {
 export async function getHighestBidPerItem(eventId) {
   /** Map: itemId -> highest bid amount (fallback to starting_bid if no bids). */
   if (!eventId) return { data: {}, error: null };
+
   const { data: items, error: itemsErr } = await withShortRetry(() =>
     supabase.from('items').select('id, starting_bid').eq('event_id', eventId)
   );
-  if (itemsErr) return { data: null, error: itemsErr };
+  if (itemsErr) {
+    log.warn('Items query failed for highest per item:', itemsErr.message);
+    return { data: null, error: itemsErr };
+  }
+
   const itemIds = (items || []).map(i => i.id);
   if (itemIds.length === 0) return { data: {}, error: null };
 
@@ -458,7 +479,10 @@ export async function getHighestBidPerItem(eventId) {
       .order('amount', { ascending: false })
       .order('created_at', { ascending: true })
   );
-  if (bidsErr) return { data: null, error: bidsErr };
+  if (bidsErr) {
+    log.warn('Bids query failed for highest per item:', bidsErr.message);
+    return { data: null, error: bidsErr };
+  }
 
   const map = {};
   for (const b of bids || []) {
@@ -474,17 +498,26 @@ export async function getHighestBidPerItem(eventId) {
 export async function getBidCountsPerItem(eventId) {
   /** Map: itemId -> count of bids. */
   if (!eventId) return { data: {}, error: null };
+
+  // Only count bids for items under this event to avoid cross-event contamination
   const { data: items, error: itemsErr } = await withShortRetry(() =>
     supabase.from('items').select('id').eq('event_id', eventId)
   );
-  if (itemsErr) return { data: null, error: itemsErr };
+  if (itemsErr) {
+    log.warn('Items query failed for counts per item:', itemsErr.message);
+    return { data: null, error: itemsErr };
+  }
   const ids = (items || []).map(i => i.id);
   if (ids.length === 0) return { data: {}, error: null };
 
   const { data: bids, error: bidsErr } = await withShortRetry(() =>
     supabase.from('bids').select('item_id').in('item_id', ids)
   );
-  if (bidsErr) return { data: null, error: bidsErr };
+  if (bidsErr) {
+    log.warn('Bids query failed for counts per item:', bidsErr.message);
+    return { data: null, error: bidsErr };
+  }
+
   const counts = {};
   for (const id of ids) counts[id] = 0;
   for (const b of bids || []) counts[b.item_id] = (counts[b.item_id] || 0) + 1;
@@ -512,7 +545,10 @@ export async function getBidsTimeSeries(eventId, options = {}) {
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: true })
   );
-  if (error) return { data: null, error };
+  if (error) {
+    log.warn('Time series query failed:', error.message);
+    return { data: null, error };
+  }
 
   // init buckets
   const buckets = new Map();

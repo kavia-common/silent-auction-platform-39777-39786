@@ -98,14 +98,24 @@ export default function BidderView() {
       setWinners([]);
       return;
     }
-    const { data, error: wErr } = await getWinnersForEvent(evtId);
-    if (wErr) {
+    // retry/backoff for consistency after close
+    const attempts = [0, 300, 300];
+    let loaded = false;
+    for (let i = 0; i < attempts.length; i++) {
+      if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+      const { data, error: wErr } = await getWinnersForEvent(evtId);
+      if (!wErr) {
+        setWinners(Array.isArray(data) ? data : []);
+        loaded = true;
+        break;
+      }
       // eslint-disable-next-line no-console
-      console.warn('Failed to compute winners:', wErr.message);
-      setWinners([]);
-      return;
+      console.warn('Failed to compute winners (bidder retry):', wErr.message);
     }
-    setWinners(Array.isArray(data) ? data : []);
+    if (!loaded) {
+      const { data } = await getWinnersForEvent(evtId);
+      setWinners(Array.isArray(data) ? data : []);
+    }
   };
 
   useEffect(() => {
@@ -134,6 +144,28 @@ export default function BidderView() {
         } catch { /* ignore */ }
 
         await loadItems(evt.id);
+
+        // If event already closed when mounting, fetch winners with retry/backoff
+        const statusNow = getNormalizedEventStatus(evt);
+        if (statusNow === 'closed') {
+          const attempts = [0, 300, 300];
+          let loaded = false;
+          for (let i = 0; i < attempts.length; i++) {
+            if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+            const { data, error: wErr } = await getWinnersForEvent(evt.id);
+            if (!wErr) {
+              setWinners(Array.isArray(data) ? data : []);
+              loaded = true;
+              break;
+            }
+            // eslint-disable-next-line no-console
+            console.warn('Winner fetch retry (bidder mount):', wErr?.message);
+          }
+          if (!loaded) {
+            const { data } = await getWinnersForEvent(evt.id);
+            setWinners(Array.isArray(data) ? data : []);
+          }
+        }
 
         const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
         const unsubEvent = subscribeToEvent(evt.id, async () => {
