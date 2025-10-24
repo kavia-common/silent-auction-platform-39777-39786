@@ -16,18 +16,23 @@ create table if not exists public.events (
   created_at timestamptz default now()
 );
 
+-- Enforce unique names (and ensure code uniqueness)
 do $$
 begin
   if not exists (
-    select 1 from pg_indexes
-    where schemaname='public' and tablename='events' and indexname='events_name_key'
+    select 1 from pg_constraint
+    where conrelid = 'public.events'::regclass
+      and contype = 'u'
+      and conname = 'events_name_key'
   ) then
     alter table public.events add constraint events_name_key unique (name);
   end if;
 
   if not exists (
-    select 1 from pg_indexes
-    where schemaname='public' and tablename='events' and indexname='events_code_key'
+    select 1 from pg_constraint
+    where conrelid = 'public.events'::regclass
+      and contype = 'u'
+      and conname = 'events_code_key'
   ) then
     alter table public.events add constraint events_code_key unique (code);
   end if;
@@ -51,18 +56,15 @@ create table if not exists public.magic_links (
   used_at timestamptz
 );
 
+-- Indexes required
 create index if not exists magic_links_event_id_idx on public.magic_links(event_id);
-create index if not exists magic_links_email_idx on public.magic_links(email);
-create index if not exists magic_links_expires_at_idx on public.magic_links(expires_at);
-create index if not exists magic_links_active_partial_idx
-  on public.magic_links (token)
-  where used_at is null and expires_at > now();
+-- token unique is already set as a unique constraint above
 ```
 
 ## 3) Performance Indexes for Items and Bids
 
 ```sql
--- ITEMS
+-- Ensure tables exist
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),
   event_id uuid not null references public.events(id) on delete cascade,
@@ -71,10 +73,7 @@ create table if not exists public.items (
   starting_bid numeric default 0,
   created_at timestamptz default now()
 );
-create index if not exists items_event_id_idx on public.items(event_id);
-create index if not exists items_created_at_idx on public.items(created_at);
 
--- BIDS
 create table if not exists public.bids (
   id uuid primary key default gen_random_uuid(),
   event_id uuid not null references public.events(id) on delete cascade,
@@ -83,17 +82,21 @@ create table if not exists public.bids (
   bidder_name text default 'Anonymous',
   created_at timestamptz default now()
 );
-create index if not exists bids_item_id_idx on public.bids(item_id);
-create index if not exists bids_event_id_idx on public.bids(event_id);
-create index if not exists bids_item_amount_desc_idx on public.bids(item_id, amount desc);
-create index if not exists bids_item_created_at_desc_idx on public.bids(item_id, created_at desc);
+
+-- Required performance indexes
+-- (a) events.name unique: enforced above as events_name_key
+-- (b) magic_links.token unique: enforced above in the table DDL
+-- (c) magic_links.event_id index: created above
+-- (d) composite bids index on (event_id, item_id, created_at desc)
+create index if not exists bids_event_item_created_at_desc_idx
+  on public.bids(event_id, item_id, created_at desc);
 ```
 
 ## 4) Supabase Realtime Tuning (<1s)
 
 - Enable Realtime (INSERT/UPDATE/DELETE) for public.items, public.bids, public.events.
-- Use filtered channels (event_id/item_id/id) to limit payloads; the frontend already does this.
-- Keep indexes above to speed capture/queries, and host close to your Supabase region to minimize RTT.
+- Use filtered channels (event_id, item_id, id) to limit payload sizes; the frontend already applies these filters.
+- Keep the above indexes to speed capture and queries, and deploy close to your Supabase region to minimize RTT.
 
 Sources:
 - react_frontend/assets/supabase_schema.sql
