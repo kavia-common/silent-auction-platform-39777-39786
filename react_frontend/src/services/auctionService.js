@@ -53,6 +53,33 @@ async function ensureEventsIsOpenPresenceKnown() {
   return false;
 }
 
+/**
+ * Internal helper: detect optional per-item close columns on items (closed_at or is_open)
+ * Used to gracefully support schemas that have these fields; otherwise we will do client-side disables.
+ */
+let hasItemClosedAt = null;
+let hasItemIsOpen = null;
+async function ensureItemCloseColumnsPresenceKnown() {
+  if (hasItemClosedAt !== null && hasItemIsOpen !== null) {
+    return { hasItemClosedAt, hasItemIsOpen };
+  }
+  // Probe with a select on a single row to see if columns exist
+  const { data, error } = await supabase
+    .from('items')
+    .select('id, closed_at, is_open')
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    const msg = error.message || '';
+    hasItemClosedAt = !/column .*closed_at.* does not exist/i.test(msg);
+    hasItemIsOpen = !/column .*is_open.* does not exist/i.test(msg);
+  } else {
+    hasItemClosedAt = data ? Object.prototype.hasOwnProperty.call(data, 'closed_at') : false;
+    hasItemIsOpen = data ? Object.prototype.hasOwnProperty.call(data, 'is_open') : false;
+  }
+  return { hasItemClosedAt, hasItemIsOpen };
+}
+
 // PUBLIC_INTERFACE
 export async function createEvent(name, customCode) {
   /** Create a new auction event with a generated code. Returns { data, error }. */

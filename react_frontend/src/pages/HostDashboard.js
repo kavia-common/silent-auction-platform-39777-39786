@@ -99,6 +99,10 @@ export default function HostDashboard() {
   useEffect(() => {
     if (isClosed) {
       refreshWinnersIfClosed(eventId);
+    } else {
+      // Clear winners if reopened
+      setWinners([]);
+      setClosedItems({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClosed, eventId]);
@@ -136,7 +140,8 @@ export default function HostDashboard() {
   };
 
   const handleCloseItem = async (itemId) => {
-    // Client-side item close for host-only visualization
+    // Client-side item close for host-only visualization. If schema supports server persistence (closed_at/is_open),
+    // this could be extended in future steps. For now we guard via UI and compute a winner snapshot.
     setClosedItems((prev) => ({ ...prev, [itemId]: true }));
     const { data } = await getWinnerForItem(itemId);
     setWinners((prev) => {
