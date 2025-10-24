@@ -1,4 +1,4 @@
-import supabase from '../lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
 
 /**
  * Utility to generate a simple event code from a name.
