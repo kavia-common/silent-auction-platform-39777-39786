@@ -427,6 +427,128 @@ export async function getWinnerForItem(itemId) {
   return { data, error };
 }
 
+/**
+ * Aggregate helpers for HostDashboard analytics.
+ * All helpers are resilient to schema differences and empty datasets.
+ */
+
+// PUBLIC_INTERFACE
+export async function getHighestBidPerItem(eventId) {
+  /** Returns a map itemId -> highest amount for the given event. */
+  if (!eventId) return { data: {}, error: null };
+  // Fetch all items for event and all bids for those items in one shot
+  const { data: items, error: itemsErr } = await supabase
+    .from('items')
+    .select('id, event_id, starting_bid')
+    .eq('event_id', eventId);
+  if (itemsErr) return { data: null, error: itemsErr };
+  const itemIds = (items || []).map(i => i.id);
+  if (itemIds.length === 0) return { data: {}, error: null };
+
+  const { data: bids, error: bidsErr } = await supabase
+    .from('bids')
+    .select('item_id, amount, created_at')
+    .in('item_id', itemIds)
+    .order('amount', { ascending: false })
+    .order('created_at', { ascending: true });
+  if (bidsErr) return { data: null, error: bidsErr };
+
+  const result = {};
+  for (const bid of bids || []) {
+    if (result[bid.item_id] == null) {
+      result[bid.item_id] = Number(bid.amount);
+    }
+  }
+  // Use starting_bid as fallback when there are no bids
+  for (const it of items) {
+    if (result[it.id] == null) {
+      result[it.id] = Number(it.starting_bid || 0);
+    }
+  }
+  return { data: result, error: null };
+}
+
+// PUBLIC_INTERFACE
+export async function getBidCountsPerItem(eventId) {
+  /** Returns a map itemId -> number of bids for the given event. */
+  if (!eventId) return { data: {}, error: null };
+  const { data: items, error: itemsErr } = await supabase
+    .from('items')
+    .select('id')
+    .eq('event_id', eventId);
+  if (itemsErr) return { data: null, error: itemsErr };
+  const itemIds = (items || []).map(i => i.id);
+  if (itemIds.length === 0) return { data: {}, error: null };
+
+  const { data: bids, error: bidsErr } = await supabase
+    .from('bids')
+    .select('item_id')
+    .in('item_id', itemIds);
+  if (bidsErr) return { data: null, error: bidsErr };
+
+  const counts = {};
+  for (const it of itemIds) counts[it] = 0;
+  for (const b of bids || []) {
+    counts[b.item_id] = (counts[b.item_id] || 0) + 1;
+  }
+  return { data: counts, error: null };
+}
+
+// PUBLIC_INTERFACE
+export async function getBidsTimeSeries(eventId, options = {}) {
+  /**
+   * Returns a time-bucketed array for bids over time for the event.
+   * options:
+   * - bucketSizeMs: number (default 60000: 1 minute)
+   * - durationMs: total lookback duration (default 60*60*1000: last 60 minutes)
+   * Result: [{ x: unixMs, y: count }, ...] ordered by x ascending
+   */
+  const bucketSizeMs = Math.max(1000, Number(options.bucketSizeMs || 60000));
+  const durationMs = Math.max(bucketSizeMs, Number(options.durationMs || 60 * 60 * 1000));
+  const end = Date.now();
+  const start = end - durationMs;
+  const buckets = new Map(); // key: bucketStartMs -> count
+
+  if (!eventId) return { data: [], error: null };
+
+  const sinceIso = new Date(start).toISOString();
+  const { data: bids, error } = await supabase
+    .from('bids')
+    .select('created_at')
+    .eq('event_id', eventId)
+    .gte('created_at', sinceIso)
+    .order('created_at', { ascending: true });
+
+  if (error) return { data: null, error };
+
+  for (let ts = start; ts <= end; ts += bucketSizeMs) {
+    buckets.set(ts - (ts % bucketSizeMs), 0);
+  }
+  for (const b of bids || []) {
+    const t = new Date(b.created_at).getTime();
+    const key = t - (t % bucketSizeMs);
+    if (buckets.has(key)) buckets.set(key, (buckets.get(key) || 0) + 1);
+  }
+  const series = Array.from(buckets.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([x, y]) => ({ x, y }));
+  return { data: series, error: null };
+}
+
+// PUBLIC_INTERFACE
+export function subscribeToBidsForEvent(eventId, onChange) {
+  /** Subscribe to any bid changes for the given event (insert/update/delete). */
+  const channel = supabase
+    .channel(`bids-changes-event-${eventId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'bids', filter: `event_id=eq.${eventId}` },
+      (payload) => { if (typeof onChange === 'function') onChange(payload); }
+    )
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
 export default {
   createEvent,
   sendHostMagicLink,
@@ -447,5 +569,9 @@ export default {
   getEventById,
   getNormalizedEventStatus,
   getWinnersForEvent,
-  getWinnerForItem
+  getWinnerForItem,
+  getHighestBidPerItem,
+  getBidCountsPerItem,
+  getBidsTimeSeries,
+  subscribeToBidsForEvent
 };

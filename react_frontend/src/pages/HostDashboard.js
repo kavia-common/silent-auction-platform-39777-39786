@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import ItemCard from '../components/ItemCard';
+import SimpleChart from '../components/SimpleChart';
 import {
   addItem,
   deleteItem,
@@ -12,7 +13,11 @@ import {
   subscribeToEvent,
   getNormalizedEventStatus,
   getWinnersForEvent,
-  getWinnerForItem
+  getWinnerForItem,
+  getHighestBidPerItem,
+  getBidCountsPerItem,
+  getBidsTimeSeries,
+  subscribeToBidsForEvent
 } from '../services/auctionService';
 
 // PUBLIC_INTERFACE
@@ -38,6 +43,11 @@ export default function HostDashboard() {
   const [closedItems, setClosedItems] = useState({});
   const [winners, setWinners] = useState([]);
 
+  // Analytics state
+  const [tableRows, setTableRows] = useState([]); // { id, title, highest, count }
+  const [series, setSeries] = useState([]); // bids over time
+  const bidsRealtimeUnsubRef = useRef(null);
+
   const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
   const auctionStatus = getNormalizedEventStatus(eventRow);
   const isClosed = auctionStatus === 'closed';
@@ -57,6 +67,8 @@ export default function HostDashboard() {
     }
     setItems(data || []);
     (data || []).forEach((it) => refreshHighBid(it.id));
+    // Refresh analytics table after loading items
+    await refreshAnalytics();
   };
 
   const loadEvent = async () => {
@@ -90,9 +102,22 @@ export default function HostDashboard() {
         refreshWinnersIfClosed(eventId);
       }
     });
+    // Bids realtime for event-level analytics refresh
+    if (bidsRealtimeUnsubRef.current) {
+      bidsRealtimeUnsubRef.current();
+    }
+    bidsRealtimeUnsubRef.current = subscribeToBidsForEvent(eventId, () => {
+      // Near real-time analytics refresh
+      refreshAnalytics();
+    });
+
     return () => {
       unsubscribeItems();
       unsubscribeEvent();
+      if (bidsRealtimeUnsubRef.current) {
+        bidsRealtimeUnsubRef.current();
+        bidsRealtimeUnsubRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
@@ -107,6 +132,27 @@ export default function HostDashboard() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClosed, eventId]);
+
+  const refreshAnalytics = async () => {
+    if (!eventId) return;
+    // Highest per item
+    const [{ data: highs }, { data: counts }, { data: ts }] = await Promise.all([
+      getHighestBidPerItem(eventId),
+      getBidCountsPerItem(eventId),
+      getBidsTimeSeries(eventId, { bucketSizeMs: 30000, durationMs: 30 * 60 * 1000 }) // 30s buckets, last 30 min
+    ]);
+    const rows = (items || []).map(it => {
+      const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
+      return {
+        id: it.id,
+        title,
+        highest: highs ? highs[it.id] ?? Number(it.starting_bid || 0) : Number(it.starting_bid || 0),
+        count: counts ? (counts[it.id] || 0) : 0
+      };
+    });
+    setTableRows(rows);
+    setSeries(Array.isArray(ts) ? ts : []);
+  };
 
   const handleAddItem = async (e) => {
     e.preventDefault();
@@ -207,6 +253,17 @@ export default function HostDashboard() {
     a.download = 'winners.csv';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const thStyle = {
+    textAlign: 'left',
+    padding: '10px 8px',
+    borderBottom: '1px solid var(--border)',
+    color: 'var(--muted)',
+    fontWeight: 600
+  };
+  const tdStyle = {
+    padding: '10px 8px'
   };
 
   return (
@@ -318,7 +375,89 @@ export default function HostDashboard() {
         {error ? <div className="alert alert--error">{error}</div> : null}
       </div>
 
-      <div className="grid">
+      {/* Analytics section */}
+      <div className="grid" style={{ marginTop: 16 }}>
+        <div className="col">
+          <h3 className="section__title">Live Bidding Activity</h3>
+          <div className="card">
+            <div className="card__header">
+              <h4 className="card__title">Bids over time (last 30 min)</h4>
+              <span className="badge">Auto-updates</span>
+            </div>
+            {series && series.length > 0 ? (
+              <SimpleChart
+                type="area"
+                data={series}
+                width={680}
+                height={160}
+                color="var(--primary)"
+                bg="linear-gradient(120deg, rgba(37,99,235,0.04), rgba(255,255,255,1))"
+                ariaLabel="Bids over time"
+              />
+            ) : (
+              <p className="card__text">No recent bids yet. Activity will appear here in real time.</p>
+            )}
+          </div>
+        </div>
+        <div className="col">
+          <h3 className="section__title">Bids per Item</h3>
+          <div className="card">
+            <div className="card__header">
+              <h4 className="card__title">Bar chart</h4>
+              <span className="badge">Auto-updates</span>
+            </div>
+            {tableRows && tableRows.length > 0 && tableRows.some(r => r.count > 0) ? (
+              <SimpleChart
+                type="bar"
+                data={tableRows.map((r, idx) => ({ x: idx, y: r.count }))}
+                width={680}
+                height={160}
+                color="var(--secondary)"
+                bg="linear-gradient(120deg, rgba(245,158,11,0.05), rgba(255,255,255,1))"
+                ariaLabel="Bids per item"
+              />
+            ) : (
+              <p className="card__text">No bids yet. Bars will appear as bids are placed.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Real-time items table */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card__header">
+          <h3 className="card__title">Real-time Items</h3>
+          <span className="badge">Updates within ~1s</span>
+        </div>
+        {tableRows.length === 0 ? (
+          <p className="card__text">No items yet. Add items above to see them here.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Item Name</th>
+                  <th style={thStyle}>Current Highest Bid</th>
+                  <th style={thStyle}># of Bids</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tableRows.map((row) => (
+                  <tr key={row.id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={tdStyle}>{row.title || 'Item'}</td>
+                    <td style={tdStyle}>
+                      <span className="badge badge--primary">{Number(row.highest || 0).toLocaleString()}</span>
+                    </td>
+                    <td style={tdStyle}>{Number(row.count || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid" style={{ marginTop: 16 }}>
         <div className="col">
           <h3 className="section__title">Items</h3>
           {loading ? <div>Loading...</div> : null}
