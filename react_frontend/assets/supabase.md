@@ -60,9 +60,10 @@ The Create Event page can send a magic link to the host email (if provided).
 
 - Supabase client: src/lib/supabaseClient.js (validates envs; single client instance)
 - Create flow: src/pages/CreateEvent.js (inserts without id; shows Supabase error messages)
-- Join flow: src/pages/JoinEvent.js (join by code or exact name)
-
-Uniqueness notes:
+- Join flow (two-step):
+  - Step 1: src/pages/JoinEventCode.js (validate code)
+  - Step 2: src/pages/JoinEventName.js (optional name, then navigate to auction room)
+  - Legacy: src/pages/JoinEvent.js (redirects to /join)
 - events.code is unique in the schema and looked up with .limit(1).maybeSingle() to guard against any legacy data inconsistencies that might otherwise trigger "Cannot coerce the result to a single JSON object".
 - events.name may not be unique; we use an exact match with .limit(1).maybeSingle() and show a friendly error if Supabase reports multiple matches. Prefer joining by code in cases of duplicate names.
 - Bidding view: src/pages/BidderView.js (loads event by code, realtime items/bids)

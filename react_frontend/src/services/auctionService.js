@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 
+const LS_JOIN_CONTEXT = 'auction.joinContext';
+
 /**
  * Utility to generate a simple event code from a name.
  * Note: In a real app, prefer generating this in the database with uniqueness guarantees.
@@ -72,6 +74,7 @@ export async function sendHostMagicLink(email, eventId) {
   return { data, error };
 }
 
+/** Convenience alias used by the join step to validate code existence. */
 // PUBLIC_INTERFACE
 export async function getEventByCode(code) {
   /** Fetch an event by its public code. Returns { data, error }.
@@ -86,6 +89,28 @@ export async function getEventByCode(code) {
     .maybeSingle();
 
   return { data, error };
+}
+
+// PUBLIC_INTERFACE
+export async function validateEventCode(eventCode) {
+  /** Validate event code existence. Returns { data, error } where data is the event row if found. */
+  return getEventByCode(eventCode);
+}
+
+// PUBLIC_INTERFACE
+export function storeBidderContext(partial) {
+  /** 
+   * Persist bidder context to localStorage: merges keys with existing.
+   * Recognized keys: eventCode, eventId, bidderName
+   */
+  try {
+    const raw = localStorage.getItem(LS_JOIN_CONTEXT);
+    const existing = raw ? JSON.parse(raw) : {};
+    const updated = { ...existing, ...partial };
+    localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
+  } catch {
+    // ignore storage errors
+  }
 }
 
 // PUBLIC_INTERFACE
@@ -263,6 +288,8 @@ export default {
   sendHostMagicLink,
   getEventByCode,
   getEventByName,
+  validateEventCode,
+  storeBidderContext,
   addItem,
   listItems,
   deleteItem,

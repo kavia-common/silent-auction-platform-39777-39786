@@ -26,7 +26,7 @@ export default function BidderView() {
   const [error, setError] = useState('');
   const [name, setName] = useState('');
 
-  // Load name from localStorage if present
+  // Load name from localStorage if present (handle reloads gracefully)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_JOIN_CONTEXT);
@@ -59,7 +59,7 @@ export default function BidderView() {
   useEffect(() => {
     const init = async () => {
       setError('');
-      // Verify event by code (guards against stale/invalid context)
+      // Verify event by code (guards against stale/invalid context) and set eventId
       const { data: evt, error: evtErr } = await getEventByCode(eventCode);
       if (evtErr || !evt) {
         const msg = evtErr?.message || 'Event not found. Check the code and try again.';
