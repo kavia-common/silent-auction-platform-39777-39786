@@ -80,6 +80,32 @@ async function ensureItemCloseColumnsPresenceKnown() {
   return { hasItemClosedAt, hasItemIsOpen };
 }
 
+/**
+ * Wrapper to perform a Supabase call with short retry/backoff for transient network/replica lag issues.
+ * Attempts: 3 (0ms, 300ms, 300ms); returns first successful response or the last error.
+ */
+async function withShortRetry(fn) {
+  const delays = [0, 300, 300];
+  let last;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i] > 0) {
+      await new Promise((r) => setTimeout(r, delays[i]));
+    }
+    try {
+      last = await fn();
+      // If call returns an object with error field, continue retry when error is present
+      if (!last || (last && last.error)) {
+        // continue to next attempt
+      } else {
+        return last;
+      }
+    } catch (e) {
+      last = { data: null, error: e };
+    }
+  }
+  return last;
+}
+
 // PUBLIC_INTERFACE
 export async function createEvent(name, customCode) {
   /** Create a new auction event with a generated code. Returns { data, error }. */
@@ -89,7 +115,8 @@ export async function createEvent(name, customCode) {
     const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
     if (hasIsOpen) payload.is_open = true;
   } catch { /* omit is_open if detection fails */ }
-  const { data, error } = await supabase.from('events').insert([payload]).select('*').single();
+  const call = () => supabase.from('events').insert([payload]).select('*').single();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -101,22 +128,23 @@ export async function sendHostMagicLink(email, eventId) {
     process.env.REACT_APP_SITE_URL ||
     (typeof window !== 'undefined' ? window.location.origin : '');
   const redirectUrl = `${siteOrigin}/host/callback${eventId ? `?eventId=${encodeURIComponent(eventId)}` : ''}`;
-  const { data, error } = await supabase.auth.signInWithOtp({
+  return withShortRetry(() => supabase.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: redirectUrl }
-  });
-  return { data, error };
+  }));
 }
 
 // PUBLIC_INTERFACE
 export async function getEventByCode(code) {
   /** Fetch event by code (limit 1, maybeSingle for resilience). */
-  const { data, error } = await supabase
-    .from('events')
-    .select('id, name, code, status, is_open, created_at')
-    .eq('code', code)
-    .limit(1)
-    .maybeSingle();
+  const call = () =>
+    supabase
+      .from('events')
+      .select('id, name, code, status, is_open, created_at')
+      .eq('code', code)
+      .limit(1)
+      .maybeSingle();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -140,12 +168,9 @@ export function storeBidderContext(partial) {
 // PUBLIC_INTERFACE
 export async function getEventByName(name) {
   /** Fetch an event by name (not guaranteed unique). */
-  const { data, error } = await supabase
-    .from('events')
-    .select('*')
-    .eq('name', name)
-    .limit(1)
-    .maybeSingle();
+  const call = () =>
+    supabase.from('events').select('*').eq('name', name).limit(1).maybeSingle();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -158,50 +183,58 @@ export async function addItem(eventId, item) {
     description: item.description || '',
     starting_bid: Number(item.starting_bid || 0)
   };
-  const { data, error } = await supabase.from('items').insert([payload]).select('*').single();
+  const call = () => supabase.from('items').insert([payload]).select('*').single();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
   /** List items for an event. */
-  const { data, error } = await supabase
-    .from('items')
-    .select('*')
-    .eq('event_id', eventId)
-    .order('created_at', { ascending: true });
+  const call = () =>
+    supabase
+      .from('items')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('created_at', { ascending: true });
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function deleteItem(itemId) {
   /** Delete an item. */
-  const { data, error } = await supabase.from('items').delete().eq('id', itemId);
+  const call = () => supabase.from('items').delete().eq('id', itemId);
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function listBidsForItem(itemId) {
   /** List bids for an item. */
-  const { data, error } = await supabase
-    .from('bids')
-    .select('*')
-    .eq('item_id', itemId)
-    .order('amount', { ascending: false });
+  const call = () =>
+    supabase
+      .from('bids')
+      .select('*')
+      .eq('item_id', itemId)
+      .order('amount', { ascending: false });
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function getHighBid(itemId) {
   /** Highest bid for item. */
-  const { data, error } = await supabase
-    .from('bids')
-    .select('id, amount, bidder_name, bidder_session_id, created_at')
-    .eq('item_id', itemId)
-    .order('amount', { ascending: false })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const call = () =>
+    supabase
+      .from('bids')
+      .select('id, amount, bidder_name, bidder_session_id, created_at')
+      .eq('item_id', itemId)
+      .order('amount', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -213,12 +246,14 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     return { data: null, error: new Error('Bid amount must be a positive number') };
   }
 
-  const { data: itemRow, error: itemErr } = await supabase
-    .from('items')
-    .select('id, starting_bid')
-    .eq('id', itemId)
-    .limit(1)
-    .maybeSingle();
+  const { data: itemRow, error: itemErr } = await withShortRetry(() =>
+    supabase
+      .from('items')
+      .select('id, starting_bid')
+      .eq('id', itemId)
+      .limit(1)
+      .maybeSingle()
+  );
   if (itemErr) return { data: null, error: new Error(itemErr.message || 'Unable to validate bid') };
 
   const starting = Number(itemRow?.starting_bid || 0);
@@ -241,10 +276,14 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     bidder_session_id: clientId
   };
 
-  let insert = await supabase.from('bids').insert([payload]).select('*').single();
+  let insert = await withShortRetry(() =>
+    supabase.from('bids').insert([payload]).select('*').single()
+  );
   if (insert.error && /column .*bidder_session_id.* does not exist/i.test(insert.error.message || '')) {
     const { bidder_session_id, ...fallbackPayload } = payload;
-    insert = await supabase.from('bids').insert([fallbackPayload]).select('*').single();
+    insert = await withShortRetry(() =>
+      supabase.from('bids').insert([fallbackPayload]).select('*').single()
+    );
   }
   return insert;
 }
@@ -300,24 +339,28 @@ export async function updateAuctionStatus(eventId, desired) {
     const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
     if (hasIsOpen) updates.is_open = isOpen;
   } catch { /* skip is_open */ }
-  const { data, error } = await supabase
-    .from('events')
-    .update(updates)
-    .eq('id', eventId)
-    .select('*')
-    .single();
+  const call = () =>
+    supabase
+      .from('events')
+      .update(updates)
+      .eq('id', eventId)
+      .select('*')
+      .single();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function getEventById(eventId) {
   /** Get event by id for host. */
-  const { data, error } = await supabase
-    .from('events')
-    .select('id, name, code, status, is_open, created_at')
-    .eq('id', eventId)
-    .limit(1)
-    .maybeSingle();
+  const call = () =>
+    supabase
+      .from('events')
+      .select('id, name, code, status, is_open, created_at')
+      .eq('id', eventId)
+      .limit(1)
+      .maybeSingle();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -348,23 +391,27 @@ export async function getWinnersForEvent(eventId) {
   if (!eventId) return { data: [], error: null };
 
   // 1) Fetch items for the event (ensures we return rows even with no bids)
-  const { data: itemsData, error: itemsErr } = await supabase
-    .from('items')
-    .select('id, title, name, starting_bid, event_id, created_at')
-    .eq('event_id', eventId)
-    .order('created_at', { ascending: true });
+  const { data: itemsData, error: itemsErr } = await withShortRetry(() =>
+    supabase
+      .from('items')
+      .select('id, title, name, starting_bid, event_id, created_at')
+      .eq('event_id', eventId)
+      .order('created_at', { ascending: true })
+  );
 
   if (itemsErr) return { data: null, error: itemsErr };
   const items = itemsData || [];
   if (items.length === 0) return { data: [], error: null };
 
   // 2) Fetch all bids for those items with deterministic ordering for tie-break
-  const { data: bidsData, error: bidsErr } = await supabase
-    .from('bids')
-    .select('item_id, id, amount, bidder_name, bidder_session_id, created_at')
-    .in('item_id', items.map(i => i.id))
-    .order('amount', { ascending: false })
-    .order('created_at', { ascending: true });
+  const { data: bidsData, error: bidsErr } = await withShortRetry(() =>
+    supabase
+      .from('bids')
+      .select('item_id, id, amount, bidder_name, bidder_session_id, created_at')
+      .in('item_id', items.map(i => i.id))
+      .order('amount', { ascending: false })
+      .order('created_at', { ascending: true })
+  );
 
   if (bidsErr) return { data: null, error: bidsErr };
 
@@ -398,14 +445,16 @@ export async function getWinnersForEvent(eventId) {
 // PUBLIC_INTERFACE
 export async function getWinnerForItem(itemId) {
   /** Highest bid for a single item; ties resolved by earliest time. */
-  const { data, error } = await supabase
-    .from('bids')
-    .select('id, amount, bidder_name, bidder_session_id, created_at')
-    .eq('item_id', itemId)
-    .order('amount', { ascending: false })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const call = () =>
+    supabase
+      .from('bids')
+      .select('id, amount, bidder_name, bidder_session_id, created_at')
+      .eq('item_id', itemId)
+      .order('amount', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+  const { data, error } = await withShortRetry(call);
   return { data, error };
 }
 
@@ -419,20 +468,24 @@ export async function getHighestBidPerItem(eventId) {
   /** Returns a map itemId -> highest amount for the given event. */
   if (!eventId) return { data: {}, error: null };
   // Fetch all items for event and all bids for those items in one shot
-  const { data: items, error: itemsErr } = await supabase
-    .from('items')
-    .select('id, event_id, starting_bid')
-    .eq('event_id', eventId);
+  const { data: items, error: itemsErr } = await withShortRetry(() =>
+    supabase
+      .from('items')
+      .select('id, event_id, starting_bid')
+      .eq('event_id', eventId)
+  );
   if (itemsErr) return { data: null, error: itemsErr };
   const itemIds = (items || []).map(i => i.id);
   if (itemIds.length === 0) return { data: {}, error: null };
 
-  const { data: bids, error: bidsErr } = await supabase
-    .from('bids')
-    .select('item_id, amount, created_at')
-    .in('item_id', itemIds)
-    .order('amount', { ascending: false })
-    .order('created_at', { ascending: true });
+  const { data: bids, error: bidsErr } = await withShortRetry(() =>
+    supabase
+      .from('bids')
+      .select('item_id, amount, created_at')
+      .in('item_id', itemIds)
+      .order('amount', { ascending: false })
+      .order('created_at', { ascending: true })
+  );
   if (bidsErr) return { data: null, error: bidsErr };
 
   const result = {};
@@ -454,18 +507,22 @@ export async function getHighestBidPerItem(eventId) {
 export async function getBidCountsPerItem(eventId) {
   /** Returns a map itemId -> number of bids for the given event. */
   if (!eventId) return { data: {}, error: null };
-  const { data: items, error: itemsErr } = await supabase
-    .from('items')
-    .select('id')
-    .eq('event_id', eventId);
+  const { data: items, error: itemsErr } = await withShortRetry(() =>
+    supabase
+      .from('items')
+      .select('id')
+      .eq('event_id', eventId)
+  );
   if (itemsErr) return { data: null, error: itemsErr };
   const itemIds = (items || []).map(i => i.id);
   if (itemIds.length === 0) return { data: {}, error: null };
 
-  const { data: bids, error: bidsErr } = await supabase
-    .from('bids')
-    .select('item_id')
-    .in('item_id', itemIds);
+  const { data: bids, error: bidsErr } = await withShortRetry(() =>
+    supabase
+      .from('bids')
+      .select('item_id')
+      .in('item_id', itemIds)
+  );
   if (bidsErr) return { data: null, error: bidsErr };
 
   const counts = {};
@@ -494,12 +551,14 @@ export async function getBidsTimeSeries(eventId, options = {}) {
   if (!eventId) return { data: [], error: null };
 
   const sinceIso = new Date(start).toISOString();
-  const { data: bids, error } = await supabase
-    .from('bids')
-    .select('created_at')
-    .eq('event_id', eventId)
-    .gte('created_at', sinceIso)
-    .order('created_at', { ascending: true });
+  const { data: bids, error } = await withShortRetry(() =>
+    supabase
+      .from('bids')
+      .select('created_at')
+      .eq('event_id', eventId)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: true })
+  );
 
   if (error) return { data: null, error };
 

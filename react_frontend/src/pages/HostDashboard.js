@@ -59,17 +59,19 @@ export default function HostDashboard() {
 
   const loadItems = async () => {
     setLoading(true);
-    const { data, error: err } = await listItems(eventId);
-    setLoading(false);
-    if (err) {
-      setError(err.message || 'Failed to load items');
-      return;
+    try {
+      const { data, error: err } = await listItems(eventId);
+      if (err) throw new Error(err.message || 'Failed to load items');
+      const list = Array.isArray(data) ? data : [];
+      setItems(list);
+      list.forEach((it) => refreshHighBid(it.id));
+      // Refresh analytics table and charts after loading items
+      await refreshAnalytics();
+    } catch (e) {
+      setError(e?.message || 'Network error while loading items');
+    } finally {
+      setLoading(false);
     }
-    const list = Array.isArray(data) ? data : [];
-    setItems(list);
-    list.forEach((it) => refreshHighBid(it.id));
-    // Refresh analytics table and charts after loading items
-    await refreshAnalytics();
   };
 
   const loadEvent = async () => {
@@ -225,34 +227,37 @@ export default function HostDashboard() {
   };
 
   const handleClose = async () => {
+    setError('');
+    setStatus('');
     setUpdatingStatus(true);
-    const { error: err } = await updateAuctionStatus(eventId, 'closed');
-    setUpdatingStatus(false);
-    if (err) {
-      setError(err.message || 'Failed to close auction');
-      return;
-    }
-    setStatus('Auction closed');
-    await loadEvent();
-
-    // Force-refresh winners immediately with small retry/backoff in case of replica lag.
-    const attempts = [0, 300, 700, 1500]; // ms backoff schedule
-    let loaded = false;
-    for (let i = 0; i < attempts.length; i++) {
-      if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
-      const { data, error: wErr } = await getWinnersForEvent(eventId);
-      if (!wErr) {
-        setWinners(Array.isArray(data) ? data : []);
-        loaded = true;
-        break;
+    try {
+      // Ensure we await the update completion
+      const { error: err } = await updateAuctionStatus(eventId, 'closed');
+      if (err) throw new Error(err.message || 'Failed to close auction');
+      setStatus('Auction closed');
+      await loadEvent();
+      // Short retry/backoff to avoid replica lag when fetching winners
+      const attempts = [0, 300, 300];
+      let winnersLoaded = false;
+      for (let i = 0; i < attempts.length; i++) {
+        if (attempts[i] > 0) await new Promise((r) => setTimeout(r, attempts[i]));
+        const { data, error: wErr } = await getWinnersForEvent(eventId);
+        if (!wErr) {
+          setWinners(Array.isArray(data) ? data : []);
+          winnersLoaded = true;
+          break;
+        }
+        // eslint-disable-next-line no-console
+        console.warn('Winners fetch retry (host):', wErr?.message);
       }
-      // eslint-disable-next-line no-console
-      console.warn('Winner fetch retry due to error:', wErr?.message);
-    }
-    if (!loaded) {
-      // Final attempt without considering error state fatal; show empty state message
-      const { data } = await getWinnersForEvent(eventId);
-      setWinners(Array.isArray(data) ? data : []);
+      if (!winnersLoaded) {
+        const { data } = await getWinnersForEvent(eventId);
+        setWinners(Array.isArray(data) ? data : []);
+      }
+    } catch (e) {
+      setError(e?.message || 'Failed to close auction');
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 

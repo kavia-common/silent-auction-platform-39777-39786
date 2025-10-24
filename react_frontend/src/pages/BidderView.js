@@ -111,67 +111,70 @@ export default function BidderView() {
   useEffect(() => {
     const init = async () => {
       setError('');
-      const { data: evt, error: evtErr } = await getEventByCode(eventCode);
-      if (evtErr || !evt) {
-        setError(evtErr?.message || 'Event not found. Check the code and try again.');
-        return;
-      }
-      setEventId(evt.id);
-      setEventRow(evt);
-
       try {
-        const raw = localStorage.getItem(LS_JOIN_CONTEXT);
-        const existing = raw ? JSON.parse(raw) : {};
-        const updated = {
-          ...existing,
-          eventId: evt.id,
-          eventCode: evt.code,
-          bidderName: existing?.bidderName || name || '',
-          clientId: existing?.clientId || getOrCreateClientId()
-        };
-        localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
-        if (!name && updated.bidderName) setName(updated.bidderName);
-      } catch { /* ignore */ }
+        const { data: evt, error: evtErr } = await getEventByCode(eventCode);
+        if (evtErr || !evt) {
+          throw new Error(evtErr?.message || 'Event not found. Check the code and try again.');
+        }
+        setEventId(evt.id);
+        setEventRow(evt);
 
-      await loadItems(evt.id);
+        try {
+          const raw = localStorage.getItem(LS_JOIN_CONTEXT);
+          const existing = raw ? JSON.parse(raw) : {};
+          const updated = {
+            ...existing,
+            eventId: evt.id,
+            eventCode: evt.code,
+            bidderName: existing?.bidderName || name || '',
+            clientId: existing?.clientId || getOrCreateClientId()
+          };
+          localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
+          if (!name && updated.bidderName) setName(updated.bidderName);
+        } catch { /* ignore */ }
 
-      const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
-      const unsubEvent = subscribeToEvent(evt.id, async () => {
-        // On any event change, refetch single row to get status/is_open
-        const refreshed = await getEventByCode(eventCode);
-        if (refreshed?.data) {
-          setEventRow(refreshed.data);
-          // If auction is now closed, load winners immediately (with small retry/backoff)
-          const newStatus = getNormalizedEventStatus(refreshed.data);
-          if (newStatus === 'closed') {
-            const attempts = [0, 300, 700, 1500];
-            let loaded = false;
-            for (let i = 0; i < attempts.length; i++) {
-              if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
-              const { data, error: wErr } = await getWinnersForEvent(evt.id);
-              if (!wErr) {
-                setWinners(Array.isArray(data) ? data : []);
-                loaded = true;
-                break;
+        await loadItems(evt.id);
+
+        const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
+        const unsubEvent = subscribeToEvent(evt.id, async () => {
+          // On any event change, refetch single row to get status/is_open
+          const refreshed = await getEventByCode(eventCode);
+          if (refreshed?.data) {
+            setEventRow(refreshed.data);
+            // If auction is now closed, load winners immediately (short retry/backoff)
+            const newStatus = getNormalizedEventStatus(refreshed.data);
+            if (newStatus === 'closed') {
+              const attempts = [0, 300, 300];
+              let loaded = false;
+              for (let i = 0; i < attempts.length; i++) {
+                if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+                const { data, error: wErr } = await getWinnersForEvent(evt.id);
+                if (!wErr) {
+                  setWinners(Array.isArray(data) ? data : []);
+                  loaded = true;
+                  break;
+                }
+                // eslint-disable-next-line no-console
+                console.warn('Winner fetch retry (bidder):', wErr?.message);
               }
-              // eslint-disable-next-line no-console
-              console.warn('Winner fetch retry (bidder):', wErr?.message);
-            }
-            if (!loaded) {
-              const { data } = await getWinnersForEvent(evt.id);
-              setWinners(Array.isArray(data) ? data : []);
+              if (!loaded) {
+                const { data } = await getWinnersForEvent(evt.id);
+                setWinners(Array.isArray(data) ? data : []);
+              }
             }
           }
-        }
-      });
-      eventUnsubRef.current = unsubEvent;
+        });
+        eventUnsubRef.current = unsubEvent;
 
-      return () => {
-        unsubItems();
-        if (eventUnsubRef.current) eventUnsubRef.current();
-        bidUnsubsRef.current.forEach((fn) => fn && fn());
-        bidUnsubsRef.current = [];
-      };
+        return () => {
+          unsubItems();
+          if (eventUnsubRef.current) eventUnsubRef.current();
+          bidUnsubsRef.current.forEach((fn) => fn && fn());
+          bidUnsubsRef.current = [];
+        };
+      } catch (e) {
+        setError(e?.message || 'Network error while loading event');
+      }
     };
 
     let cleanup = () => {};
