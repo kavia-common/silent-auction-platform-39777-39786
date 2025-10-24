@@ -19,6 +19,27 @@ The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in deve
    - Add indexes and permissive demo Row Level Security policies
    - Patch events.id to ensure UUID defaults and PK exist (prevents "null value in column id of relation events")
 
+### Troubleshooting: items.id NOT NULL violation
+If you see an error like: null value in column "id" of relation "items" violates not-null constraint, your items table likely does not have a default UUID generator on id.
+
+Fix it by running the patch script in the Supabase SQL Editor:
+- File: assets/sql_patches/items_id_uuid_patch.sql
+
+What it does:
+- Ensures pgcrypto is enabled
+- Alters items.id to UUID, NOT NULL, with default gen_random_uuid()
+- Ensures a primary key on items.id
+
+Quick verification query:
+select column_name, data_type, column_default, is_nullable
+from information_schema.columns
+where table_schema = 'public' and table_name = 'items' and column_name = 'id';
+
+Expected:
+- data_type: uuid
+- is_nullable: NO
+- column_default: gen_random_uuid()
+
 Important: The frontend never passes id when inserting events. The database generates UUIDs automatically. If you see “null value in column id of relation events,” your events table is missing the default UUID config—re-run the schema script.
 
 ## Realtime
