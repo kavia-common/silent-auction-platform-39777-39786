@@ -21,7 +21,8 @@ export default function HostDashboard() {
    * Host dashboard to manage auction items and see current high bids.
    * Realtime updates for item and event status changes.
    * Event-level open/close uses events.status + events.is_open when available.
-   * Per-item close is tracked client-side for host convenience.
+   * Per-item close is tracked client-side for host convenience; when an item is closed client-side,
+   * we compute its winner and disable further bids visually.
    */
   const { eventId } = useParams();
   const [items, setItems] = useState([]);
@@ -183,6 +184,25 @@ export default function HostDashboard() {
     }
   };
 
+  const exportCsv = () => {
+    const headers = ['Item Title','Starting Bid','Winning Amount','Winner Name','Bid Time'];
+    const rows = (winners || []).map(w => [
+      (w.title || '').replace(/"/g,'""'),
+      w.starting_bid != null ? Number(w.starting_bid) : '',
+      w.winning_amount != null ? Number(w.winning_amount) : '',
+      (w.bidder_name || '').replace(/"/g,'""'),
+      w.bid_time || ''
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'winners.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="container page">
       <h2 className="page__title">Host Dashboard</h2>
@@ -216,7 +236,14 @@ export default function HostDashboard() {
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card__header">
             <h3 className="card__title">Winners</h3>
-            <span className="badge">Computed on close</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className="badge">Computed on close</span>
+              {winners.length > 0 && (
+                <button className="btn btn--secondary" onClick={exportCsv}>
+                  Export CSV
+                </button>
+              )}
+            </div>
           </div>
           {winners.length === 0 ? (
             <p className="card__text">No winners yet. This event may have no items or no bids.</p>

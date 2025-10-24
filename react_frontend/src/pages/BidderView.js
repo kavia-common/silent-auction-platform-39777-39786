@@ -140,6 +140,12 @@ export default function BidderView() {
         const refreshed = await getEventByCode(eventCode);
         if (refreshed?.data) {
           setEventRow(refreshed.data);
+          // If auction is now closed, load winners immediately for a seamless switch
+          const newStatus = getNormalizedEventStatus(refreshed.data);
+          if (newStatus === 'closed') {
+            const { data } = await getWinnersForEvent(evt.id);
+            setWinners(data || []);
+          }
         }
       });
       eventUnsubRef.current = unsubEvent;

@@ -169,9 +169,10 @@ export async function getHighBid(itemId) {
   /** Highest bid for item. */
   const { data, error } = await supabase
     .from('bids')
-    .select('id, amount, bidder_name, created_at')
+    .select('id, amount, bidder_name, bidder_session_id, created_at')
     .eq('item_id', itemId)
     .order('amount', { ascending: false })
+    .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle();
   return { data, error };
@@ -301,26 +302,37 @@ export function getNormalizedEventStatus(evt) {
 
 // PUBLIC_INTERFACE
 export async function getWinnersForEvent(eventId) {
-  /** Compute winners by reducing highest bid per item in one query set. */
+  /**
+   * Compute winners as:
+   * - one row per item for the event
+   * - choose highest bid amount per item (ties -> earliest created_at)
+   * - include bidder_name and bidder_session_id if available
+   */
   const { data: items, error: itemsErr } = await listItems(eventId);
   if (itemsErr) return { data: null, error: itemsErr };
   const itemIds = (items || []).map((it) => it.id);
   if (itemIds.length === 0) return { data: [], error: null };
 
+  // Fetch all bids for these items
   const { data: bids, error: bidsErr } = await supabase
     .from('bids')
-    .select('item_id, id, amount, bidder_name, created_at')
+    .select('item_id, id, amount, bidder_name, bidder_session_id, created_at')
     .in('item_id', itemIds);
   if (bidsErr) return { data: null, error: bidsErr };
 
+  // Pick winner per item: max amount, tie -> earliest time
   const byItem = {};
   for (const b of bids || []) {
     const prev = byItem[b.item_id];
     if (!prev) {
       byItem[b.item_id] = b;
-    } else if (Number(b.amount) > Number(prev.amount)) {
+      continue;
+    }
+    const a = Number(b.amount);
+    const p = Number(prev.amount);
+    if (a > p) {
       byItem[b.item_id] = b;
-    } else if (Number(b.amount) === Number(prev.amount)) {
+    } else if (a === p) {
       if (new Date(b.created_at).getTime() < new Date(prev.created_at).getTime()) {
         byItem[b.item_id] = b;
       }
@@ -329,13 +341,15 @@ export async function getWinnersForEvent(eventId) {
 
   const enriched = items.map((it) => {
     const win = byItem[it.id] || null;
+    const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
     return {
       item_id: it.id,
-      title: it.title || it.name || '',
+      title,
       starting_bid: it.starting_bid ?? 0,
       winning_bid_id: win?.id || null,
       winning_amount: win ? Number(win.amount) : null,
       bidder_name: win?.bidder_name || null,
+      bidder_session_id: win?.bidder_session_id || null,
       bid_time: win?.created_at || null
     };
   });
@@ -347,7 +361,7 @@ export async function getWinnerForItem(itemId) {
   /** Highest bid for a single item; ties resolved by earliest time. */
   const { data, error } = await supabase
     .from('bids')
-    .select('id, amount, bidder_name, created_at')
+    .select('id, amount, bidder_name, bidder_session_id, created_at')
     .eq('item_id', itemId)
     .order('amount', { ascending: false })
     .order('created_at', { ascending: true })
