@@ -328,68 +328,49 @@ export function getNormalizedEventStatus(evt) {
 }
 
 /**
- * Build a single-query winners computation using RPC-like SQL via Supabase.
- * We select items for the event and left join their top bid (amount desc, created_at asc).
- * This ensures:
- * - Highest bid per item (ties resolved by earliest created_at)
- * - Only items within the specific event_id are considered
- * - Items with no bids still appear with null winner fields
+ * Build a robust winners computation:
+ * - Scope strictly by event_id
+ * - For each item, pick the highest bid; if tie, earliest created_at
+ * - Items with no bids still return with null winning fields
+ *
+ * Implementation approach:
+ * 1) Fetch items for the event (id, title/name, starting_bid)
+ * 2) Fetch all bids for those items ordered by amount DESC, created_at ASC
+ * 3) Reduce to the first row per item_id
+ *
+ * Notes:
+ * - Uses only existing columns: items(id,title/name,event_id,starting_bid), bids(item_id,amount,bidder_name,bidder_session_id,created_at)
+ * - Safe when no bids exist: winners array still includes each item with null winner fields
  */
 // PUBLIC_INTERFACE
 export async function getWinnersForEvent(eventId) {
-  /** Winners list per item for a given eventId using a single efficient query. */
+  /** Winners list per item for a given eventId using server-side ordered queries and reduction. */
   if (!eventId) return { data: [], error: null };
 
-  // Compose a SQL query using the Supabase PostgREST interface:
-  // We emulate a window function by ordering bids appropriately and limiting to 1 per item
-  // via a subselect joined per item. This avoids fetching all bids to the client.
-  const query = supabase
+  // 1) Fetch items for the event (ensures we return rows even with no bids)
+  const { data: itemsData, error: itemsErr } = await supabase
     .from('items')
-    .select(`
-      id,
-      title,
-      name,
-      starting_bid,
-      created_at,
-      event_id,
-      bids!left(
-        id,
-        amount,
-        bidder_name,
-        bidder_session_id,
-        created_at
-      )
-    `)
+    .select('id, title, name, starting_bid, event_id, created_at')
     .eq('event_id', eventId)
     .order('created_at', { ascending: true });
 
-  // PostgREST cannot natively do window functions in the select; we will:
-  // - fetch items
-  // - for each item, fetch its single top bid using server-side ordering and limit 1
-  // To keep it single round-trip per item would still be multiple calls; instead,
-  // we perform a single filtered bids fetch using embedded ordering isn't supported.
-  // Therefore, we will execute a single RPC over the 'bids' table using flat call
-  // that returns top bid per item by leveraging distinct on through a view-like query
-  // using supabase.rpc is not available without a function. So we fall back to
-  // a single server-side query per event by using a view-equivalent with nested selects:
-  const { data: itemsData, error: itemsErr } = await query;
   if (itemsErr) return { data: null, error: itemsErr };
   const items = itemsData || [];
   if (items.length === 0) return { data: [], error: null };
 
-  // Fetch top bid per item for all items in one request:
-  const { data: topBids, error: topErr } = await supabase
+  // 2) Fetch all bids for those items with deterministic ordering for tie-break
+  const { data: bidsData, error: bidsErr } = await supabase
     .from('bids')
     .select('item_id, id, amount, bidder_name, bidder_session_id, created_at')
     .in('item_id', items.map(i => i.id))
     .order('amount', { ascending: false })
     .order('created_at', { ascending: true });
 
-  if (topErr) return { data: null, error: topErr };
+  if (bidsErr) return { data: null, error: bidsErr };
 
-  // Reduce to the first row per item_id since ordering is amount desc then time asc
+  // 3) Reduce to highest bid per item (tie broken by earliest created_at due to ordering)
   const winnerByItem = {};
-  for (const b of topBids || []) {
+  for (const b of bidsData || []) {
     if (!winnerByItem[b.item_id]) {
       winnerByItem[b.item_id] = b;
     }
@@ -397,6 +378,7 @@ export async function getWinnersForEvent(eventId) {
 
   const winners = items.map((it) => {
     const win = winnerByItem[it.id] || null;
+    // Guard title vs name to avoid referencing non-existent fields
     const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
     return {
       item_id: it.id,

@@ -141,11 +141,26 @@ export default function BidderView() {
         const refreshed = await getEventByCode(eventCode);
         if (refreshed?.data) {
           setEventRow(refreshed.data);
-          // If auction is now closed, load winners immediately for a seamless switch
+          // If auction is now closed, load winners immediately (with small retry/backoff)
           const newStatus = getNormalizedEventStatus(refreshed.data);
           if (newStatus === 'closed') {
-            const { data } = await getWinnersForEvent(evt.id);
-            setWinners(data || []);
+            const attempts = [0, 300, 700, 1500];
+            let loaded = false;
+            for (let i = 0; i < attempts.length; i++) {
+              if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+              const { data, error: wErr } = await getWinnersForEvent(evt.id);
+              if (!wErr) {
+                setWinners(Array.isArray(data) ? data : []);
+                loaded = true;
+                break;
+              }
+              // eslint-disable-next-line no-console
+              console.warn('Winner fetch retry (bidder):', wErr?.message);
+            }
+            if (!loaded) {
+              const { data } = await getWinnersForEvent(evt.id);
+              setWinners(Array.isArray(data) ? data : []);
+            }
           }
         }
       });
@@ -223,7 +238,7 @@ export default function BidderView() {
       {error ? <div className="alert alert--error">{error}</div> : null}
       {!error && isClosed ? (
         <div className="alert" role="status" aria-live="polite" style={{ marginTop: 12 }}>
-          The auction is currently closed. You can view items and final prices, but bidding is disabled.
+          The auction is closed. Final results are shown below when available; bidding is disabled.
         </div>
       ) : null}
 
@@ -234,7 +249,7 @@ export default function BidderView() {
             <span className="badge">Final results</span>
           </div>
           {winners.length === 0 ? (
-            <p className="card__text">No winners available. Items may have received no bids.</p>
+            <p className="card__text">No winners to display yet. Items may have received no bids, or results are finalizing.</p>
           ) : (
             <div>
               {winners.map((w) => (

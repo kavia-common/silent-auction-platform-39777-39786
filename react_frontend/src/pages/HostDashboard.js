@@ -65,9 +65,10 @@ export default function HostDashboard() {
       setError(err.message || 'Failed to load items');
       return;
     }
-    setItems(data || []);
-    (data || []).forEach((it) => refreshHighBid(it.id));
-    // Refresh analytics table after loading items
+    const list = Array.isArray(data) ? data : [];
+    setItems(list);
+    list.forEach((it) => refreshHighBid(it.id));
+    // Refresh analytics table and charts after loading items
     await refreshAnalytics();
   };
 
@@ -229,10 +230,29 @@ export default function HostDashboard() {
     setUpdatingStatus(false);
     if (err) {
       setError(err.message || 'Failed to close auction');
-    } else {
-      setStatus('Auction closed');
-      await loadEvent();
-      await refreshWinnersIfClosed(eventId);
+      return;
+    }
+    setStatus('Auction closed');
+    await loadEvent();
+
+    // Force-refresh winners immediately with small retry/backoff in case of replica lag.
+    const attempts = [0, 300, 700, 1500]; // ms backoff schedule
+    let loaded = false;
+    for (let i = 0; i < attempts.length; i++) {
+      if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
+      const { data, error: wErr } = await getWinnersForEvent(eventId);
+      if (!wErr) {
+        setWinners(Array.isArray(data) ? data : []);
+        loaded = true;
+        break;
+      }
+      // eslint-disable-next-line no-console
+      console.warn('Winner fetch retry due to error:', wErr?.message);
+    }
+    if (!loaded) {
+      // Final attempt without considering error state fatal; show empty state message
+      const { data } = await getWinnersForEvent(eventId);
+      setWinners(Array.isArray(data) ? data : []);
     }
   };
 
@@ -309,7 +329,7 @@ export default function HostDashboard() {
             </div>
           </div>
           {winners.length === 0 ? (
-            <p className="card__text">No winners yet. This event may have no items or no bids.</p>
+            <p className="card__text">No winners yet. Either items have no bids or results are finalizing. This section updates live.</p>
           ) : (
             <div>
               {winners.map((w) => (
@@ -460,8 +480,8 @@ export default function HostDashboard() {
       <div className="grid" style={{ marginTop: 16 }}>
         <div className="col">
           <h3 className="section__title">Items</h3>
-          {loading ? <div>Loading...</div> : null}
-          {sortedItems.length === 0 ? (
+          {loading ? <div className="hint">Loading items…</div> : null}
+          {!loading && sortedItems.length === 0 ? (
             <div className="card">
               <p className="card__text">No items yet. Add your first item above.</p>
             </div>
