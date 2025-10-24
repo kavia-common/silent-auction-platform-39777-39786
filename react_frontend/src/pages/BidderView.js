@@ -9,7 +9,8 @@ import {
   subscribeToBids,
   subscribeToItems,
   subscribeToEvent,
-  getNormalizedEventStatus
+  getNormalizedEventStatus,
+  getWinnersForEvent
 } from '../services/auctionService';
 import { getOrCreateClientId } from '../lib/clientId';
 
@@ -22,6 +23,7 @@ export default function BidderView() {
    * Realtime updates for new items and bids.
    * Consumes bidder context from localStorage and keeps it in sync on name changes.
    * Shows a green success toast after a successful bid insert.
+   * Displays winners automatically when the event is closed.
    */
   const { eventCode } = useParams();
   const [eventId, setEventId] = useState(null);
@@ -31,6 +33,7 @@ export default function BidderView() {
   const [error, setError] = useState('');
   const [name, setName] = useState('');
   const [toast, setToast] = useState(null); // { message }
+  const [winners, setWinners] = useState([]);
 
   // To track current subscriptions on bids when items change
   const bidUnsubsRef = useRef([]);
@@ -99,6 +102,21 @@ export default function BidderView() {
     attachBidRealtime(list);
   };
 
+  const refreshWinnersIfClosed = async (evtId) => {
+    if (!evtId) return;
+    if (!isClosed) {
+      setWinners([]);
+      return;
+    }
+    const { data, error: wErr } = await getWinnersForEvent(evtId);
+    if (wErr) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to compute winners:', wErr.message);
+      return;
+    }
+    setWinners(data || []);
+  };
+
   useEffect(() => {
     const init = async () => {
       setError('');
@@ -135,7 +153,9 @@ export default function BidderView() {
       const unsubEvent = subscribeToEvent(evt.id, async () => {
         // Refetch event row to reflect status changes
         const refreshed = await getEventByCode(eventCode);
-        if (refreshed?.data) setEventRow(refreshed.data);
+        if (refreshed?.data) {
+          setEventRow(refreshed.data);
+        }
       });
       eventUnsubRef.current = unsubEvent;
 
@@ -155,6 +175,12 @@ export default function BidderView() {
     return () => cleanup();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventCode]);
+
+  useEffect(() => {
+    // whenever closed state flips, refresh winners
+    refreshWinnersIfClosed(eventId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClosed, eventId]);
 
   // Keep bidder name in localStorage synced
   const onChangeName = (e) => {
@@ -218,6 +244,33 @@ export default function BidderView() {
           The auction is currently closed. You can view items and final prices, but bidding is disabled.
         </div>
       ) : null}
+
+      {isClosed && (
+        <div className="card" style={{ marginTop: 16, marginBottom: 16 }}>
+          <div className="card__header">
+            <h3 className="card__title">Winners</h3>
+            <span className="badge">Final results</span>
+          </div>
+          {winners.length === 0 ? (
+            <p className="card__text">No winners available. Items may have received no bids.</p>
+          ) : (
+            <div>
+              {winners.map((w) => (
+                <div key={w.item_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div>
+                    <strong>{w.title || 'Item'}</strong>
+                    <div className="hint">Starting: {Number(w.starting_bid || 0).toLocaleString()}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div>Winner: <strong>{w.bidder_name || '—'}</strong></div>
+                    <div>Amount: <span className="badge badge--primary">{w.winning_amount != null ? Number(w.winning_amount).toLocaleString() : '—'}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Success toast */}
       {toast ? (

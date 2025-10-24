@@ -10,7 +10,9 @@ import {
   getEventById,
   updateAuctionStatus,
   subscribeToEvent,
-  getNormalizedEventStatus
+  getNormalizedEventStatus,
+  getWinnersForEvent,
+  getWinnerForItem
 } from '../services/auctionService';
 
 // PUBLIC_INTERFACE
@@ -18,6 +20,7 @@ export default function HostDashboard() {
   /**
    * Host dashboard to manage auction items and see current high bids.
    * Realtime updates for item and event status changes.
+   * Adds: event-level open/close, per-item "close" (client-side guard), and winners display on close.
    */
   const { eventId } = useParams();
   const [items, setItems] = useState([]);
@@ -28,6 +31,11 @@ export default function HostDashboard() {
   const [status, setStatus] = useState('');
   const [eventRow, setEventRow] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  // Track item-level close state client-side (id -> boolean)
+  const [closedItems, setClosedItems] = useState({});
+  // Winners for the event once closed
+  const [winners, setWinners] = useState([]);
 
   const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
   const auctionStatus = getNormalizedEventStatus(eventRow);
@@ -55,6 +63,17 @@ export default function HostDashboard() {
     if (!err) setEventRow(data || null);
   };
 
+  const refreshWinnersIfClosed = async (evtId) => {
+    if (!evtId) return;
+    const { data, error: wErr } = await getWinnersForEvent(evtId);
+    if (wErr) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to compute winners:', wErr.message);
+      return;
+    }
+    setWinners(data || []);
+  };
+
   useEffect(() => {
     loadEvent();
     loadItems();
@@ -62,8 +81,14 @@ export default function HostDashboard() {
       // Re-fetch to reflect any change
       loadItems();
     });
-    const unsubscribeEvent = subscribeToEvent(eventId, () => {
-      loadEvent();
+    const unsubscribeEvent = subscribeToEvent(eventId, async () => {
+      await loadEvent();
+      // On any event change, if closed, compute winners
+      const latest = await getEventById(eventId);
+      const latestStatus = getNormalizedEventStatus(latest?.data || null);
+      if (latestStatus === 'closed') {
+        refreshWinnersIfClosed(eventId);
+      }
     });
     return () => {
       unsubscribeItems();
@@ -71,6 +96,14 @@ export default function HostDashboard() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
+
+  useEffect(() => {
+    if (isClosed) {
+      // compute winners once visible as closed
+      refreshWinnersIfClosed(eventId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClosed, eventId]);
 
   const handleAddItem = async (e) => {
     e.preventDefault();
@@ -104,6 +137,29 @@ export default function HostDashboard() {
     setItems((prev) => prev.filter((i) => i.id !== id));
   };
 
+  // Simulated per-item close: this is client-side to prevent further bids in the host UI context.
+  // Bidders are still governed by event closed status; item-level close is a host-side convenience.
+  const handleCloseItem = async (itemId) => {
+    setClosedItems((prev) => ({ ...prev, [itemId]: true }));
+    // Also refresh winner for this item if event is open but you want to see current top
+    const { data } = await getWinnerForItem(itemId);
+    setWinners((prev) => {
+      const others = prev.filter((w) => w.item_id !== itemId);
+      return [
+        ...others,
+        {
+          item_id: itemId,
+          title: (items.find((i) => i.id === itemId)?.title) || '',
+          starting_bid: items.find((i) => i.id === itemId)?.starting_bid ?? 0,
+          winning_bid_id: data?.id || null,
+          winning_amount: data?.amount != null ? Number(data.amount) : null,
+          bidder_name: data?.bidder_name || null,
+          bid_time: data?.created_at || null
+        }
+      ];
+    });
+  };
+
   const handleOpen = async () => {
     setUpdatingStatus(true);
     const { error: err } = await updateAuctionStatus(eventId, 'open');
@@ -112,6 +168,8 @@ export default function HostDashboard() {
       setError(err.message || 'Failed to open auction');
     } else {
       setStatus('Auction opened');
+      setClosedItems({});
+      setWinners([]);
       loadEvent();
     }
   };
@@ -124,7 +182,8 @@ export default function HostDashboard() {
       setError(err.message || 'Failed to close auction');
     } else {
       setStatus('Auction closed');
-      loadEvent();
+      await loadEvent();
+      await refreshWinnersIfClosed(eventId);
     }
   };
 
@@ -155,6 +214,40 @@ export default function HostDashboard() {
           When closed, bidders can no longer place new bids. Items remain visible in bidder view.
         </div>
       </div>
+
+      {isClosed && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card__header">
+            <h3 className="card__title">Winners</h3>
+            <span className="badge">Computed on close</span>
+          </div>
+          {winners.length === 0 ? (
+            <p className="card__text">No winners yet. This event may have no items or no bids.</p>
+          ) : (
+            <div>
+              {winners.map((w) => (
+                <div key={w.item_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div>
+                    <strong>{w.title || 'Item'}</strong>
+                    <div className="hint">Starting: {Number(w.starting_bid || 0).toLocaleString()}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div>
+                      Winner: <strong>{w.bidder_name || '—'}</strong>
+                    </div>
+                    <div>
+                      Amount: <span className="badge badge--primary">{w.winning_amount != null ? Number(w.winning_amount).toLocaleString() : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="hint" style={{ marginTop: 8 }}>
+            Winner = highest bid per item (ties resolved by earliest bid time).
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3 className="card__title">Add Item</h3>
@@ -209,14 +302,33 @@ export default function HostDashboard() {
             </div>
           ) : null}
           <div className="grid grid--cards">
-            {sortedItems.map((it) => (
-              <ItemCard
-                key={it.id}
-                item={it}
-                highBid={highBids[it.id] ?? null}
-                onDelete={() => handleDeleteItem(it.id)}
-              />
-            ))}
+            {sortedItems.map((it) => {
+              const disabled = !!closedItems[it.id] || isClosed;
+              return (
+                <div key={it.id} className="card">
+                  <div className="card__header">
+                    <h3 className="card__title">{it.title}</h3>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {!isClosed && !closedItems[it.id] && (
+                        <button className="btn btn--text btn--danger" onClick={() => handleCloseItem(it.id)}>
+                          Close Item
+                        </button>
+                      )}
+                      <button className="btn btn--text btn--danger" onClick={() => handleDeleteItem(it.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                  {it.description ? <p className="card__text">{it.description}</p> : null}
+                  <div className="item-card__meta">
+                    <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>
+                    <span className="badge badge--primary">Current: {Number(highBids[it.id] ?? it.starting_bid ?? 0).toLocaleString()}</span>
+                    {closedItems[it.id] && !isClosed ? <span className="badge">Closed</span> : null}
+                  </div>
+                  <div className="hint">{disabled ? 'Bidding disabled for this item.' : 'Item is open for bidding.'}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

@@ -432,6 +432,94 @@ export function getNormalizedEventStatus(evt) {
   return getEventStatus(evt);
 }
 
+/**
+ * PUBLIC_INTERFACE
+ * Compute winners (highest bid per item) for an event.
+ * Returns list of items with winning bid details (or null if no bids).
+ *
+ * Minimal SQL guidance if you prefer running a single SQL in Supabase SQL editor:
+ *
+ * -- Highest bid per item:
+ * with ranked as (
+ *   select b.*, row_number() over (partition by b.item_id order by b.amount desc, b.created_at asc) as rn
+ *   from public.bids b
+ *   where b.event_id = '<event_id>'
+ * )
+ * select i.id as item_id, i.title, i.starting_bid,
+ *        r.id as winning_bid_id, r.amount as winning_amount, r.bidder_name, r.created_at as bid_time
+ * from public.items i
+ * left join ranked r on r.item_id = i.id and r.rn = 1
+ * where i.event_id = '<event_id>';
+ */
+// PUBLIC_INTERFACE
+export async function getWinnersForEvent(eventId) {
+  /** Compute winners client-side by fetching items and top bids. */
+  // Get all items for the event
+  const { data: items, error: itemsErr } = await listItems(eventId);
+  if (itemsErr) return { data: null, error: itemsErr };
+
+  // For all item ids, fetch top bid in one query
+  const itemIds = (items || []).map((it) => it.id);
+  if (itemIds.length === 0) return { data: [], error: null };
+
+  const { data: bids, error: bidsErr } = await supabase
+    .from('bids')
+    .select('item_id, id, amount, bidder_name, created_at')
+    .in('item_id', itemIds);
+
+  if (bidsErr) return { data: null, error: bidsErr };
+
+  // Reduce to highest bid per item (amount desc, tie-breaker earliest created_at)
+  const byItem = {};
+  for (const b of bids || []) {
+    const prev = byItem[b.item_id];
+    if (!prev) {
+      byItem[b.item_id] = b;
+    } else {
+      if (Number(b.amount) > Number(prev.amount)) {
+        byItem[b.item_id] = b;
+      } else if (Number(b.amount) === Number(prev.amount)) {
+        if (new Date(b.created_at).getTime() < new Date(prev.created_at).getTime()) {
+          byItem[b.item_id] = b;
+        }
+      }
+    }
+  }
+
+  const enriched = items.map((it) => {
+    const win = byItem[it.id] || null;
+    return {
+      item_id: it.id,
+      title: it.title || it.name || '',
+      starting_bid: it.starting_bid ?? 0,
+      winning_bid_id: win?.id || null,
+      winning_amount: win ? Number(win.amount) : null,
+      bidder_name: win?.bidder_name || null,
+      bid_time: win?.created_at || null
+    };
+  });
+
+  return { data: enriched, error: null };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Compute winner for a single item.
+ */
+// PUBLIC_INTERFACE
+export async function getWinnerForItem(itemId) {
+  /** Highest bid for one item with bidder details. */
+  const { data, error } = await supabase
+    .from('bids')
+    .select('id, amount, bidder_name, created_at')
+    .eq('item_id', itemId)
+    .order('amount', { ascending: false })
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return { data, error };
+}
+
 export default {
   createEvent,
   sendHostMagicLink,
@@ -450,5 +538,7 @@ export default {
   subscribeToEvent,
   updateAuctionStatus,
   getEventById,
-  getNormalizedEventStatus
+  getNormalizedEventStatus,
+  getWinnersForEvent,
+  getWinnerForItem
 };
