@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { storeBidderContext, validateEventCode } from '../services/auctionService';
+import { getOrCreateClientId } from '../lib/clientId';
 
 // PUBLIC_INTERFACE
 export default function JoinEventName() {
@@ -30,8 +31,8 @@ export default function JoinEventName() {
         if (err || !data) {
           throw new Error(err?.message || 'Event not found. Please check the code.');
         }
-        // Seed context with event info but no name yet
-        storeBidderContext({ eventCode: data.code, eventId: data.id });
+        // Seed context with event info but no name yet, and persist clientId
+        storeBidderContext({ eventCode: data.code, eventId: data.id, clientId: getOrCreateClientId() });
       } catch (e) {
         setError(e?.message || 'Unable to verify event');
       }

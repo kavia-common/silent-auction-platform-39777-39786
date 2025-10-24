@@ -162,6 +162,31 @@ execute function public.enforce_higher_bids();
 
 If you need strong guarantees under heavy concurrent bidding, wrap the check+insert in a single function using advisory locks or SERIALIZABLE transactions and call it via RPC.
 
+## Anonymous Session IDs for Bidders
+
+The frontend assigns a stable UUIDv4 per browser (stored in localStorage) and includes it as bids.bidder_session_id on inserts. Apply this idempotent migration:
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bids'
+      and column_name = 'bidder_session_id'
+  ) then
+    alter table public.bids add column bidder_session_id text;
+  end if;
+end $$;
+
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+```
+
+Notes:
+- Column is nullable for backwards compatibility.
+- Frontend retries inserts without the field if the column is missing, but add it to capture session identity.
+- Useful for analytics and rate-limiting strategies.
+
 ## Optional Triggers or Views for Winner Calculation
 
 When an event closes, hosts need winners for each item. You can compute winners on-demand with a query or maintain a materialized view for fast access.

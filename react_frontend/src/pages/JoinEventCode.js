@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { validateEventCode, storeBidderContext } from '../services/auctionService';
+import { getOrCreateClientId } from '../lib/clientId';
 
 // PUBLIC_INTERFACE
 export default function JoinEventCode() {
@@ -27,8 +28,8 @@ export default function JoinEventCode() {
       if (err || !data) {
         throw new Error(err?.message || 'Event not found. Check the code and try again.');
       }
-      // Seed storage with code so name step can read it
-      storeBidderContext({ eventCode: data.code, eventId: data.id });
+      // Seed storage with code so name step can read it and persist clientId
+      storeBidderContext({ eventCode: data.code, eventId: data.id, clientId: getOrCreateClientId() });
       navigate(`/join/${encodeURIComponent(data.code)}/name`, { state: { eventCode: data.code } });
     } catch (e2) {
       setError(e2?.message || 'Unable to verify event');

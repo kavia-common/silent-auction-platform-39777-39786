@@ -154,7 +154,31 @@ create index if not exists bids_event_item_created_at_desc_idx
   on public.bids(event_id, item_id, created_at desc);
 ```
 
-## 4) Supabase Realtime Tuning (<1s)
+## 4) Anonymous Bidder Session IDs
+
+Add a nullable text column to store the anonymous clientId from the browser on each bid. This enables grouping bids by device/session without authentication.
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bids'
+      and column_name = 'bidder_session_id'
+  ) then
+    alter table public.bids add column bidder_session_id text;
+  end if;
+end $$;
+
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+```
+
+Frontend behavior:
+- A UUID v4 clientId is generated and persisted in localStorage (auction.clientId).
+- All bid inserts include bidder_session_id when the column exists; if absent, the app retries without it to remain functional.
+
+## 5) Supabase Realtime Tuning (<1s)
 
 - Enable Realtime (INSERT/UPDATE/DELETE) for public.events, public.items, public.bids.
 - Use filtered channels in the client to minimize payloads:

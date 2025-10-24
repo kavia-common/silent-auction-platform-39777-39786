@@ -11,6 +11,7 @@ import {
   subscribeToEvent,
   getNormalizedEventStatus
 } from '../services/auctionService';
+import { getOrCreateClientId } from '../lib/clientId';
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
 
@@ -35,14 +36,18 @@ export default function BidderView() {
   const bidUnsubsRef = useRef([]);
   const eventUnsubRef = useRef(null);
 
-  // Load name from localStorage if present (handle reloads gracefully)
+  // Load name from localStorage if present (handle reloads gracefully) and ensure clientId exists
   useEffect(() => {
     try {
+      // ensure we have a clientId persisted for this browser session
+      const cid = getOrCreateClientId();
+
       const raw = localStorage.getItem(LS_JOIN_CONTEXT);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.bidderName) setName(parsed.bidderName);
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (!parsed.clientId && cid) {
+        localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify({ ...parsed, clientId: cid }));
       }
+      if (parsed?.bidderName) setName(parsed.bidderName);
     } catch {
       /* ignore */
     }
@@ -107,11 +112,17 @@ export default function BidderView() {
       setEventId(evt.id);
       setEventRow(evt);
 
-      // Persist/refresh context including possibly updated eventId
+      // Persist/refresh context including possibly updated eventId and clientId
       try {
         const raw = localStorage.getItem(LS_JOIN_CONTEXT);
         const existing = raw ? JSON.parse(raw) : {};
-        const updated = { ...existing, eventId: evt.id, eventCode: evt.code, bidderName: existing?.bidderName || name || '' };
+        const updated = {
+          ...existing,
+          eventId: evt.id,
+          eventCode: evt.code,
+          bidderName: existing?.bidderName || name || '',
+          clientId: existing?.clientId || getOrCreateClientId()
+        };
         localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
         if (!name && updated.bidderName) setName(updated.bidderName);
       } catch {

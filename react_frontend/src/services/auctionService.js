@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { getOrCreateClientId } from '../lib/clientId';
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
 
@@ -250,6 +251,7 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
    * - amount must exceed current price (max of starting_bid and highest bid)
    *
    * NOTE: Server/database-side checks must be implemented for true integrity.
+   * Adds bidder_session_id for anonymous session tracking.
    */
   const numeric = Number(amount);
   if (!Number.isFinite(numeric) || numeric <= 0) {
@@ -280,15 +282,29 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     return { data: null, error: new Error(`Bid must be greater than current price (${current})`) };
   }
 
+  // Ensure we have a clientId in localStorage (anonymous session identifier)
+  const clientId = getOrCreateClientId();
+
   const payload = {
     event_id: eventId,
     item_id: itemId,
     amount: numeric,
-    bidder_name: (bidderName || 'Anonymous').trim() || 'Anonymous'
+    bidder_name: (bidderName || 'Anonymous').trim() || 'Anonymous',
+    // This column may not yet exist in older schemas; DB will ignore unknown fields only if column exists.
+    // We include it and document adding the column; if absent, Supabase will return an error.
+    // To handle gracefully, we attempt insert with and without the column (fallback below).
+    bidder_session_id: clientId
   };
 
-  const { data, error } = await supabase.from('bids').insert([payload]).select('*').single();
-  return { data, error };
+  // Try insert with bidder_session_id; if the column doesn't exist, retry without it.
+  let insert = await supabase.from('bids').insert([payload]).select('*').single();
+
+  if (insert.error && /column .*bidder_session_id.* does not exist/i.test(insert.error.message || '')) {
+    const { bidder_session_id, ...fallbackPayload } = payload;
+    insert = await supabase.from('bids').insert([fallbackPayload]).select('*').single();
+  }
+
+  return insert;
 }
 
 // PUBLIC_INTERFACE

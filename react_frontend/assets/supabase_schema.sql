@@ -41,10 +41,12 @@ create table if not exists public.bids (
   item_id uuid not null references public.items(id) on delete cascade,
   amount numeric not null check (amount > 0),
   bidder_name text default 'Anonymous',
+  bidder_session_id text, -- anonymous browser/session identifier
   created_at timestamptz default now()
 );
 create index if not exists bids_item_id_idx on public.bids(item_id);
 create index if not exists bids_event_id_idx on public.bids(event_id);
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
 
 -- RLS (enable and add permissive demo policies; refine for production)
 alter table public.events enable row level security;

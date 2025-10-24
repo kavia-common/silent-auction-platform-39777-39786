@@ -58,6 +58,34 @@ Expected:
 
 Important: The frontend never passes id when inserting events. The database generates UUIDs automatically. If you see “null value in column id of relation events,” your events table is missing the default UUID config—re-run the schema script.
 
+## Anonymous Session IDs (bidder_session_id)
+
+The frontend now generates a stable anonymous clientId (UUID v4) per browser and includes it in every bid as bids.bidder_session_id. To enable this, add the column to public.bids:
+
+SQL (idempotent patch):
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bids'
+      and column_name = 'bidder_session_id'
+  ) then
+    alter table public.bids add column bidder_session_id text;
+  end if;
+end $$;
+
+-- Optional: index for analytics or querying by session
+create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
+```
+
+Notes:
+- The column is nullable and optional; existing rows remain valid.
+- Frontend falls back gracefully: if the column does not exist yet, the first insert attempt will retry without the field to avoid runtime errors (but you should add the column to capture session identity).
+- The clientId is stored in localStorage as auction.clientId.
+
 ## Realtime
 
 Enable replication (Realtime) for tables:
