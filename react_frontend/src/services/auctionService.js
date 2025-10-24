@@ -24,44 +24,31 @@ function generateEventCode(name = '') {
  */
 function getEventStatus(evt) {
   if (!evt) return 'open';
-  // Prefer string status if present
   if (typeof evt.status === 'string' && evt.status.trim()) return evt.status;
-  // Fallback to boolean is_open (older/newer schema variant)
   if (typeof evt.is_open === 'boolean') return evt.is_open ? 'open' : 'closed';
-  // Default to open to avoid blocking the UI if both are absent
   return 'open';
 }
 
 /**
- * NOTE: The database must generate the primary key for events.id (UUID default).
- * Ensure your Supabase schema has: id uuid primary key default gen_random_uuid()
- * This function intentionally omits 'id' from the insert payload.
+ * Internal helper to detect if events.is_open exists (cached).
+ * This avoids write errors in projects that haven't applied the is_open patch.
  */
 let hasIsOpenCache = null;
 async function ensureEventsIsOpenPresenceKnown() {
-  // Fast path
   if (typeof hasIsOpenCache === 'boolean') return hasIsOpenCache;
-  // Probe one row for shape; if no rows, use a select with limited columns and check error details
   const { data, error } = await supabase
     .from('events')
     .select('id, is_open')
     .limit(1)
     .maybeSingle();
-
-  // If we got data and 'is_open' in it (could be undefined if column missing)
   if (data && Object.prototype.hasOwnProperty.call(data, 'is_open')) {
     hasIsOpenCache = true;
     return true;
   }
-
-  // If error mentions 'column' or 'is_open' missing, infer false; otherwise conservatively assume false
   if (error && /column .*is_open.* does not exist/i.test(error.message || '')) {
     hasIsOpenCache = false;
     return false;
   }
-
-  // If no rows returned, we cannot observe shape; try a safer detection by querying information_schema via RPC is not available on anon.
-  // Fall back to false (omit is_open in writes) to avoid runtime errors; the UI still works by using status text.
   hasIsOpenCache = false;
   return false;
 }
@@ -70,124 +57,74 @@ async function ensureEventsIsOpenPresenceKnown() {
 export async function createEvent(name, customCode) {
   /** Create a new auction event with a generated code. Returns { data, error }. */
   const code = (customCode && customCode.trim()) ? customCode.trim() : generateEventCode(name);
-
-  // Build payload without 'id' to allow DB default to generate it
   const payload = { name, code, status: 'open' };
-  // Conditionally include is_open if the column exists
   try {
     const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
     if (hasIsOpen) payload.is_open = true;
-  } catch {
-    // ignore detection errors; omit is_open to be safe
-  }
-
-  // Insert and return created event
-  const { data, error } = await supabase
-    .from('events')
-    .insert([payload])
-    .select('*')
-    .single();
-
+  } catch { /* omit is_open if detection fails */ }
+  const { data, error } = await supabase.from('events').insert([payload]).select('*').single();
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function sendHostMagicLink(email, eventId) {
-  /**
-   * Sends a passwordless magic link to the host's email.
-   * The email redirect includes eventId so we can route the host to their dashboard.
-   * Returns { data, error } from Supabase Auth.
-   *
-   * NOTE: Make sure you set the Site URL in Supabase Auth settings to allow redirect.
-   */
-  if (!email) {
-    return { data: null, error: new Error('Email is required') };
-  }
-
+  /** Send a Supabase Auth magic link to host with redirect to dashboard. */
+  if (!email) return { data: null, error: new Error('Email is required') };
   const siteOrigin =
     process.env.REACT_APP_SITE_URL ||
     (typeof window !== 'undefined' ? window.location.origin : '');
-  const redirectUrl = `${siteOrigin}/host/callback${
-    eventId ? `?eventId=${encodeURIComponent(eventId)}` : ''
-  }`;
-
-  // TODO: Configure Supabase email templates/policies as needed.
+  const redirectUrl = `${siteOrigin}/host/callback${eventId ? `?eventId=${encodeURIComponent(eventId)}` : ''}`;
   const { data, error } = await supabase.auth.signInWithOtp({
     email,
-    options: {
-      emailRedirectTo: redirectUrl
-    }
+    options: { emailRedirectTo: redirectUrl }
   });
-
   return { data, error };
 }
 
-/** Convenience alias used by the join step to validate code existence. */
 // PUBLIC_INTERFACE
 export async function getEventByCode(code) {
-  /** Fetch an event by its public code. Returns { data, error }.
-   * Uses .maybeSingle() to avoid "Cannot coerce the result to a single JSON object"
-   * if the database contains unexpected duplicates. We also .limit(1) for safety.
-   */
+  /** Fetch event by code (limit 1, maybeSingle for resilience). */
   const { data, error } = await supabase
     .from('events')
     .select('id, name, code, status, is_open, created_at')
     .eq('code', code)
     .limit(1)
     .maybeSingle();
-
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function validateEventCode(eventCode) {
-  /** Validate event code existence. Returns { data, error } where data is the event row if found. */
+  /** Validate event code existence. */
   return getEventByCode(eventCode);
 }
 
 // PUBLIC_INTERFACE
 export function storeBidderContext(partial) {
-  /** 
-   * Persist bidder context to localStorage: merges keys with existing.
-   * Recognized keys: eventCode, eventId, bidderName
-   */
+  /** Merge and store bidder context in localStorage. */
   try {
     const raw = localStorage.getItem(LS_JOIN_CONTEXT);
     const existing = raw ? JSON.parse(raw) : {};
     const updated = { ...existing, ...partial };
     localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
-  } catch {
-    // ignore storage errors
-  }
+  } catch { /* ignore */ }
 }
 
 // PUBLIC_INTERFACE
 export async function getEventByName(name) {
-  /** Fetch an event by name (exact match). Returns { data, error }.
-   * Uses .maybeSingle() because names may not be unique in the database.
-   * If multiple rows match, Supabase returns an error; callers should surface a friendly message.
-   */
+  /** Fetch an event by name (not guaranteed unique). */
   const { data, error } = await supabase
     .from('events')
     .select('*')
     .eq('name', name)
     .limit(1)
     .maybeSingle();
-
   return { data, error };
 }
 
-/**
- * NOTE: items.id must be generated by the database (UUID default). Do not send `id` from the client.
- * If you encounter "null value in column \"id\" of relation \"items\"" errors, apply:
- * assets/sql_patches/items_id_uuid_patch.sql in your Supabase SQL editor.
- */
 // PUBLIC_INTERFACE
 export async function addItem(eventId, item) {
-  /**
-   * Add a new auction item to an event.
-   * item: { title, description, starting_bid }
-   */
+  /** Add new item to an event. */
   const payload = {
     event_id: eventId,
     title: item.title,
@@ -200,38 +137,36 @@ export async function addItem(eventId, item) {
 
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
-  /** List items for an event. Returns { data, error }. */
+  /** List items for an event. */
   const { data, error } = await supabase
     .from('items')
     .select('*')
     .eq('event_id', eventId)
     .order('created_at', { ascending: true });
-
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function deleteItem(itemId) {
-  /** Delete an item by id. Returns { data, error }. */
+  /** Delete an item. */
   const { data, error } = await supabase.from('items').delete().eq('id', itemId);
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function listBidsForItem(itemId) {
-  /** List bids for an item ordered by amount desc. Returns { data, error }. */
+  /** List bids for an item. */
   const { data, error } = await supabase
     .from('bids')
     .select('*')
     .eq('item_id', itemId)
     .order('amount', { ascending: false });
-
   return { data, error };
 }
 
 // PUBLIC_INTERFACE
 export async function getHighBid(itemId) {
-  /** Fetch the highest bid for an item. Returns { data, error }. */
+  /** Highest bid for item. */
   const { data, error } = await supabase
     .from('bids')
     .select('id, amount, bidder_name, created_at')
@@ -239,59 +174,28 @@ export async function getHighBid(itemId) {
     .order('amount', { ascending: false })
     .limit(1)
     .maybeSingle();
-
   return { data, error };
 }
 
-/**
- * Inline SQL to add bidder_session_id if your DB is missing the column (run in Supabase SQL Editor):
- *
- * do $$
- * begin
- *   if not exists (
- *     select 1 from information_schema.columns
- *     where table_schema = 'public'
- *       and table_name = 'bids'
- *       and column_name = 'bidder_session_id'
- *   ) then
- *     alter table public.bids add column bidder_session_id text;
- *   end if;
- * end $$;
- * create index if not exists bids_bidder_session_id_idx on public.bids(bidder_session_id);
- */
-
 // PUBLIC_INTERFACE
 export async function placeBid({ eventId, itemId, amount, bidderName }) {
-  /**
-   * Place a bid with client-side validation:
-   * - amount must be a positive number
-   * - amount must exceed current price (max of starting_bid and highest bid)
-   *
-   * Server/database-side checks should be implemented for integrity.
-   * Always attempts to include bidder_session_id for anonymous session tracking and gracefully
-   * retries without the field if the DB column is missing (older schema).
-   */
+  /** Place a bid with client-side validation and bidder_session_id shim. */
   const numeric = Number(amount);
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return { data: null, error: new Error('Bid amount must be a positive number') };
   }
 
-  // Fetch the item to know its starting_bid
   const { data: itemRow, error: itemErr } = await supabase
     .from('items')
     .select('id, starting_bid')
     .eq('id', itemId)
     .limit(1)
     .maybeSingle();
-
-  if (itemErr) {
-    return { data: null, error: new Error(itemErr.message || 'Unable to validate bid') };
-  }
+  if (itemErr) return { data: null, error: new Error(itemErr.message || 'Unable to validate bid') };
 
   const starting = Number(itemRow?.starting_bid || 0);
   const { data: high, error: highErr } = await getHighBid(itemId);
   if (highErr) {
-    // Non-fatal; proceed but warn via console
     // eslint-disable-next-line no-console
     console.warn('Could not fetch high bid for validation:', highErr.message);
   }
@@ -300,9 +204,7 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     return { data: null, error: new Error(`Bid must be greater than current price (${current})`) };
   }
 
-  // Ensure we have a clientId in localStorage (anonymous session identifier)
   const clientId = getOrCreateClientId();
-
   const payload = {
     event_id: eventId,
     item_id: itemId,
@@ -311,100 +213,65 @@ export async function placeBid({ eventId, itemId, amount, bidderName }) {
     bidder_session_id: clientId
   };
 
-  // Try insert with bidder_session_id; if the column doesn't exist, retry without it.
   let insert = await supabase.from('bids').insert([payload]).select('*').single();
-
   if (insert.error && /column .*bidder_session_id.* does not exist/i.test(insert.error.message || '')) {
     const { bidder_session_id, ...fallbackPayload } = payload;
     insert = await supabase.from('bids').insert([fallbackPayload]).select('*').single();
   }
-
   return insert;
 }
 
 // PUBLIC_INTERFACE
 export function subscribeToItems(eventId, onChange) {
-  /**
-   * Subscribe to realtime changes for items in an event.
-   * Returns an unsubscribe function.
-   *
-   * Requires Realtime enabled and Row Level Security policies configured in Supabase.
-   */
+  /** Subscribe to realtime item changes for an event. */
   const channel = supabase
     .channel(`items-changes-${eventId}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'items', filter: `event_id=eq.${eventId}` },
-      (payload) => {
-        if (typeof onChange === 'function') onChange(payload);
-      }
+      (payload) => { if (typeof onChange === 'function') onChange(payload); }
     )
     .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
+  return () => { supabase.removeChannel(channel); };
 }
 
 // PUBLIC_INTERFACE
 export function subscribeToBids(itemId, onChange) {
-  /**
-   * Subscribe to realtime changes for bids on a specific item.
-   * Returns an unsubscribe function.
-   */
+  /** Subscribe to realtime bid changes for a given item. */
   const channel = supabase
     .channel(`bids-changes-item-${itemId}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'bids', filter: `item_id=eq.${itemId}` },
-      (payload) => {
-        if (typeof onChange === 'function') onChange(payload);
-      }
+      (payload) => { if (typeof onChange === 'function') onChange(payload); }
     )
     .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
+  return () => { supabase.removeChannel(channel); };
 }
 
 // PUBLIC_INTERFACE
 export function subscribeToEvent(eventId, onChange) {
-  /**
-   * Subscribe to realtime updates for a single event (e.g., status changes).
-   * Returns an unsubscribe function.
-   */
+  /** Subscribe to realtime event row updates (status/is_open). */
   const channel = supabase
     .channel(`event-${eventId}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'events', filter: `id=eq.${eventId}` },
-      (payload) => {
-        if (typeof onChange === 'function') onChange(payload);
-      }
+      (payload) => { if (typeof onChange === 'function') onChange(payload); }
     )
     .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
+  return () => { supabase.removeChannel(channel); };
 }
 
- // PUBLIC_INTERFACE
+// PUBLIC_INTERFACE
 export async function updateAuctionStatus(eventId, desired) {
-  /**
-   * Update auction open/closed status.
-   * desired: 'open' | 'closed'
-   * Attempts to update string status and, if supported by schema, boolean is_open.
-   */
+  /** Update event status and is_open (if available). */
   const isOpen = desired === 'open';
   const updates = { status: desired };
   try {
     const hasIsOpen = await ensureEventsIsOpenPresenceKnown();
     if (hasIsOpen) updates.is_open = isOpen;
-  } catch {
-    // ignore detection errors; skip is_open
-  }
+  } catch { /* skip is_open */ }
   const { data, error } = await supabase
     .from('events')
     .update(updates)
@@ -416,7 +283,7 @@ export async function updateAuctionStatus(eventId, desired) {
 
 // PUBLIC_INTERFACE
 export async function getEventById(eventId) {
-  /** Fetch a single event by id for host view. */
+  /** Get event by id for host. */
   const { data, error } = await supabase
     .from('events')
     .select('id, name, code, status, is_open, created_at')
@@ -432,33 +299,11 @@ export function getNormalizedEventStatus(evt) {
   return getEventStatus(evt);
 }
 
-/**
- * PUBLIC_INTERFACE
- * Compute winners (highest bid per item) for an event.
- * Returns list of items with winning bid details (or null if no bids).
- *
- * Minimal SQL guidance if you prefer running a single SQL in Supabase SQL editor:
- *
- * -- Highest bid per item:
- * with ranked as (
- *   select b.*, row_number() over (partition by b.item_id order by b.amount desc, b.created_at asc) as rn
- *   from public.bids b
- *   where b.event_id = '<event_id>'
- * )
- * select i.id as item_id, i.title, i.starting_bid,
- *        r.id as winning_bid_id, r.amount as winning_amount, r.bidder_name, r.created_at as bid_time
- * from public.items i
- * left join ranked r on r.item_id = i.id and r.rn = 1
- * where i.event_id = '<event_id>';
- */
 // PUBLIC_INTERFACE
 export async function getWinnersForEvent(eventId) {
-  /** Compute winners client-side by fetching items and top bids. */
-  // Get all items for the event
+  /** Compute winners by reducing highest bid per item in one query set. */
   const { data: items, error: itemsErr } = await listItems(eventId);
   if (itemsErr) return { data: null, error: itemsErr };
-
-  // For all item ids, fetch top bid in one query
   const itemIds = (items || []).map((it) => it.id);
   if (itemIds.length === 0) return { data: [], error: null };
 
@@ -466,22 +311,18 @@ export async function getWinnersForEvent(eventId) {
     .from('bids')
     .select('item_id, id, amount, bidder_name, created_at')
     .in('item_id', itemIds);
-
   if (bidsErr) return { data: null, error: bidsErr };
 
-  // Reduce to highest bid per item (amount desc, tie-breaker earliest created_at)
   const byItem = {};
   for (const b of bids || []) {
     const prev = byItem[b.item_id];
     if (!prev) {
       byItem[b.item_id] = b;
-    } else {
-      if (Number(b.amount) > Number(prev.amount)) {
+    } else if (Number(b.amount) > Number(prev.amount)) {
+      byItem[b.item_id] = b;
+    } else if (Number(b.amount) === Number(prev.amount)) {
+      if (new Date(b.created_at).getTime() < new Date(prev.created_at).getTime()) {
         byItem[b.item_id] = b;
-      } else if (Number(b.amount) === Number(prev.amount)) {
-        if (new Date(b.created_at).getTime() < new Date(prev.created_at).getTime()) {
-          byItem[b.item_id] = b;
-        }
       }
     }
   }
@@ -498,17 +339,12 @@ export async function getWinnersForEvent(eventId) {
       bid_time: win?.created_at || null
     };
   });
-
   return { data: enriched, error: null };
 }
 
-/**
- * PUBLIC_INTERFACE
- * Compute winner for a single item.
- */
 // PUBLIC_INTERFACE
 export async function getWinnerForItem(itemId) {
-  /** Highest bid for one item with bidder details. */
+  /** Highest bid for a single item; ties resolved by earliest time. */
   const { data, error } = await supabase
     .from('bids')
     .select('id, amount, bidder_name, created_at')

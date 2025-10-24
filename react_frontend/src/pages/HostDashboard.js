@@ -20,7 +20,8 @@ export default function HostDashboard() {
   /**
    * Host dashboard to manage auction items and see current high bids.
    * Realtime updates for item and event status changes.
-   * Adds: event-level open/close, per-item "close" (client-side guard), and winners display on close.
+   * Event-level open/close uses events.status + events.is_open when available.
+   * Per-item close is tracked client-side for host convenience.
    */
   const { eventId } = useParams();
   const [items, setItems] = useState([]);
@@ -32,9 +33,8 @@ export default function HostDashboard() {
   const [eventRow, setEventRow] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  // Track item-level close state client-side (id -> boolean)
+  // Per-item close: host-only client-side guard
   const [closedItems, setClosedItems] = useState({});
-  // Winners for the event once closed
   const [winners, setWinners] = useState([]);
 
   const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
@@ -78,12 +78,10 @@ export default function HostDashboard() {
     loadEvent();
     loadItems();
     const unsubscribeItems = subscribeToItems(eventId, () => {
-      // Re-fetch to reflect any change
       loadItems();
     });
     const unsubscribeEvent = subscribeToEvent(eventId, async () => {
       await loadEvent();
-      // On any event change, if closed, compute winners
       const latest = await getEventById(eventId);
       const latestStatus = getNormalizedEventStatus(latest?.data || null);
       if (latestStatus === 'closed') {
@@ -99,7 +97,6 @@ export default function HostDashboard() {
 
   useEffect(() => {
     if (isClosed) {
-      // compute winners once visible as closed
       refreshWinnersIfClosed(eventId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,20 +134,19 @@ export default function HostDashboard() {
     setItems((prev) => prev.filter((i) => i.id !== id));
   };
 
-  // Simulated per-item close: this is client-side to prevent further bids in the host UI context.
-  // Bidders are still governed by event closed status; item-level close is a host-side convenience.
   const handleCloseItem = async (itemId) => {
+    // Client-side item close for host-only visualization
     setClosedItems((prev) => ({ ...prev, [itemId]: true }));
-    // Also refresh winner for this item if event is open but you want to see current top
     const { data } = await getWinnerForItem(itemId);
     setWinners((prev) => {
       const others = prev.filter((w) => w.item_id !== itemId);
+      const target = items.find((i) => i.id === itemId);
       return [
         ...others,
         {
           item_id: itemId,
-          title: (items.find((i) => i.id === itemId)?.title) || '',
-          starting_bid: items.find((i) => i.id === itemId)?.starting_bid ?? 0,
+          title: target?.title || '',
+          starting_bid: target?.starting_bid ?? 0,
           winning_bid_id: data?.id || null,
           winning_amount: data?.amount != null ? Number(data.amount) : null,
           bidder_name: data?.bidder_name || null,
@@ -211,7 +207,8 @@ export default function HostDashboard() {
           </button>
         </div>
         <div className="hint" style={{ marginTop: 8 }}>
-          When closed, bidders can no longer place new bids. Items remain visible in bidder view.
+          Opening sets events.status='open' and events.is_open=true (if available).
+          Closing sets events.status='closed' and events.is_open=false (if available).
         </div>
       </div>
 
@@ -232,12 +229,8 @@ export default function HostDashboard() {
                     <div className="hint">Starting: {Number(w.starting_bid || 0).toLocaleString()}</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div>
-                      Winner: <strong>{w.bidder_name || '—'}</strong>
-                    </div>
-                    <div>
-                      Amount: <span className="badge badge--primary">{w.winning_amount != null ? Number(w.winning_amount).toLocaleString() : '—'}</span>
-                    </div>
+                    <div>Winner: <strong>{w.bidder_name || '—'}</strong></div>
+                    <div>Amount: <span className="badge badge--primary">{w.winning_amount != null ? Number(w.winning_amount).toLocaleString() : '—'}</span></div>
                   </div>
                 </div>
               ))}

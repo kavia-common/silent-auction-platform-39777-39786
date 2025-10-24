@@ -19,11 +19,9 @@ const LS_JOIN_CONTEXT = 'auction.joinContext';
 // PUBLIC_INTERFACE
 export default function BidderView() {
   /**
-   * Bidder page: join by event code, view items, place bids.
-   * Realtime updates for new items and bids.
-   * Consumes bidder context from localStorage and keeps it in sync on name changes.
-   * Shows a green success toast after a successful bid insert.
-   * Displays winners automatically when the event is closed.
+   * Bidder page for joining via event code, seeing items, and bidding.
+   * Reflects event open/closed via events.status or events.is_open.
+   * Automatically displays winners when the event closes.
    */
   const { eventCode } = useParams();
   const [eventId, setEventId] = useState(null);
@@ -32,32 +30,26 @@ export default function BidderView() {
   const [highBids, setHighBids] = useState({});
   const [error, setError] = useState('');
   const [name, setName] = useState('');
-  const [toast, setToast] = useState(null); // { message }
+  const [toast, setToast] = useState(null);
   const [winners, setWinners] = useState([]);
 
-  // To track current subscriptions on bids when items change
   const bidUnsubsRef = useRef([]);
   const eventUnsubRef = useRef(null);
 
-  // Load name from localStorage if present (handle reloads gracefully) and ensure clientId exists
   useEffect(() => {
+    // Ensure a clientId exists and preload bidder name from storage if present
     try {
-      // ensure we have a clientId persisted for this browser session
       const cid = getOrCreateClientId();
-
       const raw = localStorage.getItem(LS_JOIN_CONTEXT);
       const parsed = raw ? JSON.parse(raw) : {};
       if (!parsed.clientId && cid) {
         localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify({ ...parsed, clientId: cid }));
       }
       if (parsed?.bidderName) setName(parsed.bidderName);
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }, []);
 
   const normalizeItem = (it) => {
-    // Support both "name" and "title" fields gracefully
     const title = typeof it.title === 'string' && it.title.trim()
       ? it.title
       : (typeof it.name === 'string' ? it.name : '');
@@ -78,11 +70,10 @@ export default function BidderView() {
   };
 
   const attachBidRealtime = (itemsList) => {
-    // Clear previous
+    // Unsubscribe existing
     bidUnsubsRef.current.forEach((fn) => fn && fn());
     bidUnsubsRef.current = [];
-
-    // Subscribe to each item's bids
+    // Subscribe per-item for realtime high-bid refresh
     (itemsList || []).forEach((it) => {
       const unsub = subscribeToBids(it.id, () => loadHighBid(it.id));
       bidUnsubsRef.current.push(unsub);
@@ -95,10 +86,9 @@ export default function BidderView() {
       setError(err.message || 'Failed to load items');
       return;
     }
-    const list = (data || []);
+    const list = data || [];
     setItems(list);
     list.forEach((it) => loadHighBid(it.id));
-    // Update bid realtime subscriptions
     attachBidRealtime(list);
   };
 
@@ -120,17 +110,14 @@ export default function BidderView() {
   useEffect(() => {
     const init = async () => {
       setError('');
-      // Verify event by code (guards against stale/invalid context) and set eventId
       const { data: evt, error: evtErr } = await getEventByCode(eventCode);
       if (evtErr || !evt) {
-        const msg = evtErr?.message || 'Event not found. Check the code and try again.';
-        setError(msg);
+        setError(evtErr?.message || 'Event not found. Check the code and try again.');
         return;
       }
       setEventId(evt.id);
       setEventRow(evt);
 
-      // Persist/refresh context including possibly updated eventId and clientId
       try {
         const raw = localStorage.getItem(LS_JOIN_CONTEXT);
         const existing = raw ? JSON.parse(raw) : {};
@@ -143,15 +130,13 @@ export default function BidderView() {
         };
         localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify(updated));
         if (!name && updated.bidderName) setName(updated.bidderName);
-      } catch {
-        /* ignore storage errors */
-      }
+      } catch { /* ignore */ }
 
       await loadItems(evt.id);
 
       const unsubItems = subscribeToItems(evt.id, () => loadItems(evt.id));
       const unsubEvent = subscribeToEvent(evt.id, async () => {
-        // Refetch event row to reflect status changes
+        // On any event change, refetch single row to get status/is_open
         const refreshed = await getEventByCode(eventCode);
         if (refreshed?.data) {
           setEventRow(refreshed.data);
@@ -167,7 +152,6 @@ export default function BidderView() {
       };
     };
 
-    // init returns a cleanup but we can't use it directly in useEffect, so wrap:
     let cleanup = () => {};
     init().then((fn) => {
       if (typeof fn === 'function') cleanup = fn;
@@ -177,12 +161,11 @@ export default function BidderView() {
   }, [eventCode]);
 
   useEffect(() => {
-    // whenever closed state flips, refresh winners
+    // When event status flips to closed, render winners
     refreshWinnersIfClosed(eventId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClosed, eventId]);
 
-  // Keep bidder name in localStorage synced
   const onChangeName = (e) => {
     const nm = e.target.value;
     setName(nm);
@@ -190,30 +173,22 @@ export default function BidderView() {
       const raw = localStorage.getItem(LS_JOIN_CONTEXT);
       const existing = raw ? JSON.parse(raw) : {};
       localStorage.setItem(LS_JOIN_CONTEXT, JSON.stringify({ ...existing, bidderName: nm }));
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   };
 
   const showToast = (message) => {
     setToast({ message });
-    // Auto hide
     setTimeout(() => setToast(null), 2200);
   };
 
   const handleBid = (item) => async (amount) => {
-    if (!eventId) {
-      throw new Error('Event not loaded');
-    }
-    if (isClosed) {
-      throw new Error('Auction is closed. Bidding is disabled.');
-    }
-    const { error: bidErr } = await placeBid({ eventId, itemId: item.id, amount, bidderName: name.trim() });
+    if (!eventId) throw new Error('Event not loaded');
+    if (isClosed) throw new Error('Auction is closed. Bidding is disabled.');
+    const { error: bidErr } = await placeBid({
+      eventId, itemId: item.id, amount, bidderName: name.trim()
+    });
     if (bidErr) throw new Error(bidErr.message || 'Failed to place bid');
-
-    // On success: show toast and gently refresh the item high bid if realtime isn't immediate
     showToast(`You have bid on “${item.title || item.name || 'item'}”`);
-    // Fallback refetch for robustness even with realtime
     loadHighBid(item.id);
   };
 
@@ -272,7 +247,6 @@ export default function BidderView() {
         </div>
       )}
 
-      {/* Success toast */}
       {toast ? (
         <div
           role="status"
