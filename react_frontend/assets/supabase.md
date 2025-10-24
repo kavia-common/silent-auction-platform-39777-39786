@@ -21,6 +21,8 @@ The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in deve
 
 Important: The frontend never passes id when inserting events or items. The database generates UUIDs automatically. If you see “null value in column id of relation events” or “null value in column id of relation items,” your table is missing the default UUID config—re-run the schema script so the safety patches apply.
 
+If you specifically need to patch items.id quickly, run the SQL snippet in assets/sql_patches/items_id_uuid_patch.sql in the Supabase SQL Editor.
+
 ## Realtime
 
 Enable replication (Realtime) for tables:
@@ -34,6 +36,17 @@ The app subscribes to these using Supabase Realtime channels.
 The Create Event page can send a magic link to the host email (if provided).
 - Make sure your Supabase Auth > URL Configuration allows the redirect domain.
 - Redirect is computed as: ${REACT_APP_SITE_URL || window.location.origin}/host/callback?eventId=<uuid>
+
+## Handling “Cannot coerce the result to a single JSON object”
+
+This error occurs if .single() is used on a query that can return multiple rows. We’ve ensured:
+
+- getEventByCode(code): uses .limit(1).maybeSingle() so it won’t throw if multiple rows match due to accidental duplicates; it simply returns the first row or null.
+- getEventByName(name): uses .maybeSingle() (names could theoretically duplicate, so we don’t force single()).
+- getHighBid(itemId): uses .order('amount', { ascending: false }).limit(1).maybeSingle() to fetch the top bid safely.
+- list endpoints (listItems, listBidsForItem) return arrays and do not call .single().
+
+Only insert-return selects (createEvent, addItem, placeBid) use .single() because Supabase returns exactly one inserted row in those calls.
 
 ## Frontend Entry Points
 

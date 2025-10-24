@@ -70,12 +70,14 @@ export async function sendHostMagicLink(email, eventId) {
 
 // PUBLIC_INTERFACE
 export async function getEventByCode(code) {
-  /** Fetch an event by its public code. Returns { data, error }. */
+  /** Fetch an event by its public code. Returns { data, error }.
+   * Uses limit(1).maybeSingle() to avoid coercion errors if multiple rows exist mistakenly. */
   const { data, error } = await supabase
     .from('events')
     .select('*')
     .eq('code', code)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   return { data, error };
 }
