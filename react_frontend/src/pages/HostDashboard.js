@@ -70,9 +70,10 @@ export default function HostDashboard() {
     if (wErr) {
       // eslint-disable-next-line no-console
       console.warn('Failed to compute winners:', wErr.message);
+      setWinners([]);
       return;
     }
-    setWinners(data || []);
+    setWinners(Array.isArray(data) ? data : []);
   };
 
   useEffect(() => {
