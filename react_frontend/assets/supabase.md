@@ -17,9 +17,9 @@ The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in deve
    - Enable pgcrypto (for gen_random_uuid)
    - Create tables: events, items, participants, bids (all IDs default to UUIDs)
    - Add indexes and permissive demo Row Level Security policies
-   - Patch events.id to ensure UUID defaults and PK exist (prevents "null value in column id of relation events")
+   - Patch events.id and items.id to ensure UUID defaults and PK exist (prevents "null value in column id of relation events/items")
 
-Important: The frontend never passes id when inserting events. The database generates UUIDs automatically. If you see “null value in column id of relation events,” your events table is missing the default UUID config—re-run the schema script.
+Important: The frontend never passes id when inserting events or items. The database generates UUIDs automatically. If you see “null value in column id of relation events” or “null value in column id of relation items,” your table is missing the default UUID config—re-run the schema script so the safety patches apply.
 
 ## Realtime
 

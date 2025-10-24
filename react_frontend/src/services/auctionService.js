@@ -97,6 +97,9 @@ export async function addItem(eventId, item) {
   /**
    * Add a new auction item to an event.
    * item: { title, description, starting_bid }
+   *
+   * Important: The database must generate the primary key for items.id (UUID default).
+   * We intentionally omit 'id' in insert payload and defensively strip it if present.
    */
   const payload = {
     event_id: eventId,
@@ -104,6 +107,8 @@ export async function addItem(eventId, item) {
     description: item.description || '',
     starting_bid: Number(item.starting_bid || 0)
   };
+  // Defensive: never pass 'id' to insert; rely on DB default gen_random_uuid()
+  if ('id' in payload) delete payload.id;
   const { data, error } = await supabase.from('items').insert([payload]).select('*').single();
   return { data, error };
 }
