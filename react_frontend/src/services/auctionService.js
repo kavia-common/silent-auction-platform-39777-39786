@@ -371,26 +371,14 @@ export function getNormalizedEventStatus(evt) {
 }
 
 /**
- * Build a robust winners computation:
- * - Scope strictly by event_id
- * - For each item, pick the highest bid; if tie, earliest created_at
- * - Items with no bids still return with null winning fields
- *
- * Implementation approach:
- * 1) Fetch items for the event (id, title/name, starting_bid)
- * 2) Fetch all bids for those items ordered by amount DESC, created_at ASC
- * 3) Reduce to the first row per item_id
- *
- * Notes:
- * - Uses only existing columns: items(id,title/name,event_id,starting_bid), bids(item_id,amount,bidder_name,bidder_session_id,created_at)
- * - Safe when no bids exist: winners array still includes each item with null winner fields
+ * Winners and analytics helpers
  */
+
 // PUBLIC_INTERFACE
 export async function getWinnersForEvent(eventId) {
-  /** Winners list per item for a given eventId using server-side ordered queries and reduction. */
+  /** Winners list per item for a given eventId using highest bid per item; ties -> earliest created_at. */
   if (!eventId) return { data: [], error: null };
 
-  // 1) Fetch items for the event (ensures we return rows even with no bids)
   const { data: itemsData, error: itemsErr } = await withShortRetry(() =>
     supabase
       .from('items')
@@ -398,12 +386,10 @@ export async function getWinnersForEvent(eventId) {
       .eq('event_id', eventId)
       .order('created_at', { ascending: true })
   );
-
   if (itemsErr) return { data: null, error: itemsErr };
   const items = itemsData || [];
   if (items.length === 0) return { data: [], error: null };
 
-  // 2) Fetch all bids for those items with deterministic ordering for tie-break
   const { data: bidsData, error: bidsErr } = await withShortRetry(() =>
     supabase
       .from('bids')
@@ -412,20 +398,15 @@ export async function getWinnersForEvent(eventId) {
       .order('amount', { ascending: false })
       .order('created_at', { ascending: true })
   );
-
   if (bidsErr) return { data: null, error: bidsErr };
 
-  // 3) Reduce to highest bid per item (tie broken by earliest created_at due to ordering)
   const winnerByItem = {};
   for (const b of bidsData || []) {
-    if (!winnerByItem[b.item_id]) {
-      winnerByItem[b.item_id] = b;
-    }
+    if (!winnerByItem[b.item_id]) winnerByItem[b.item_id] = b;
   }
 
   const winners = items.map((it) => {
     const win = winnerByItem[it.id] || null;
-    // Guard title vs name to avoid referencing non-existent fields
     const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
     return {
       item_id: it.id,
@@ -458,21 +439,12 @@ export async function getWinnerForItem(itemId) {
   return { data, error };
 }
 
-/**
- * Aggregate helpers for HostDashboard analytics.
- * All helpers are resilient to schema differences and empty datasets.
- */
-
 // PUBLIC_INTERFACE
 export async function getHighestBidPerItem(eventId) {
-  /** Returns a map itemId -> highest amount for the given event. */
+  /** Map: itemId -> highest bid amount (fallback to starting_bid if no bids). */
   if (!eventId) return { data: {}, error: null };
-  // Fetch all items for event and all bids for those items in one shot
   const { data: items, error: itemsErr } = await withShortRetry(() =>
-    supabase
-      .from('items')
-      .select('id, event_id, starting_bid')
-      .eq('event_id', eventId)
+    supabase.from('items').select('id, starting_bid').eq('event_id', eventId)
   );
   if (itemsErr) return { data: null, error: itemsErr };
   const itemIds = (items || []).map(i => i.id);
@@ -488,70 +460,51 @@ export async function getHighestBidPerItem(eventId) {
   );
   if (bidsErr) return { data: null, error: bidsErr };
 
-  const result = {};
-  for (const bid of bids || []) {
-    if (result[bid.item_id] == null) {
-      result[bid.item_id] = Number(bid.amount);
-    }
+  const map = {};
+  for (const b of bids || []) {
+    if (map[b.item_id] == null) map[b.item_id] = Number(b.amount);
   }
-  // Use starting_bid as fallback when there are no bids
   for (const it of items) {
-    if (result[it.id] == null) {
-      result[it.id] = Number(it.starting_bid || 0);
-    }
+    if (map[it.id] == null) map[it.id] = Number(it.starting_bid || 0);
   }
-  return { data: result, error: null };
+  return { data: map, error: null };
 }
 
 // PUBLIC_INTERFACE
 export async function getBidCountsPerItem(eventId) {
-  /** Returns a map itemId -> number of bids for the given event. */
+  /** Map: itemId -> count of bids. */
   if (!eventId) return { data: {}, error: null };
   const { data: items, error: itemsErr } = await withShortRetry(() =>
-    supabase
-      .from('items')
-      .select('id')
-      .eq('event_id', eventId)
+    supabase.from('items').select('id').eq('event_id', eventId)
   );
   if (itemsErr) return { data: null, error: itemsErr };
-  const itemIds = (items || []).map(i => i.id);
-  if (itemIds.length === 0) return { data: {}, error: null };
+  const ids = (items || []).map(i => i.id);
+  if (ids.length === 0) return { data: {}, error: null };
 
   const { data: bids, error: bidsErr } = await withShortRetry(() =>
-    supabase
-      .from('bids')
-      .select('item_id')
-      .in('item_id', itemIds)
+    supabase.from('bids').select('item_id').in('item_id', ids)
   );
   if (bidsErr) return { data: null, error: bidsErr };
-
   const counts = {};
-  for (const it of itemIds) counts[it] = 0;
-  for (const b of bids || []) {
-    counts[b.item_id] = (counts[b.item_id] || 0) + 1;
-  }
+  for (const id of ids) counts[id] = 0;
+  for (const b of bids || []) counts[b.item_id] = (counts[b.item_id] || 0) + 1;
   return { data: counts, error: null };
 }
 
 // PUBLIC_INTERFACE
 export async function getBidsTimeSeries(eventId, options = {}) {
   /**
-   * Returns a time-bucketed array for bids over time for the event.
-   * options:
-   * - bucketSizeMs: number (default 60000: 1 minute)
-   * - durationMs: total lookback duration (default 60*60*1000: last 60 minutes)
-   * Result: [{ x: unixMs, y: count }, ...] ordered by x ascending
+   * Time series for bids in last window; returns [{x: unixMs, y: count}]
    */
   const bucketSizeMs = Math.max(1000, Number(options.bucketSizeMs || 60000));
   const durationMs = Math.max(bucketSizeMs, Number(options.durationMs || 60 * 60 * 1000));
   const end = Date.now();
   const start = end - durationMs;
-  const buckets = new Map(); // key: bucketStartMs -> count
 
   if (!eventId) return { data: [], error: null };
 
   const sinceIso = new Date(start).toISOString();
-  const { data: bids, error } = await withShortRetry(() =>
+  const { data, error } = await withShortRetry(() =>
     supabase
       .from('bids')
       .select('created_at')
@@ -559,26 +512,25 @@ export async function getBidsTimeSeries(eventId, options = {}) {
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: true })
   );
-
   if (error) return { data: null, error };
 
+  // init buckets
+  const buckets = new Map();
   for (let ts = start; ts <= end; ts += bucketSizeMs) {
     buckets.set(ts - (ts % bucketSizeMs), 0);
   }
-  for (const b of bids || []) {
-    const t = new Date(b.created_at).getTime();
+  for (const row of data || []) {
+    const t = new Date(row.created_at).getTime();
     const key = t - (t % bucketSizeMs);
     if (buckets.has(key)) buckets.set(key, (buckets.get(key) || 0) + 1);
   }
-  const series = Array.from(buckets.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([x, y]) => ({ x, y }));
+  const series = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]).map(([x, y]) => ({ x, y }));
   return { data: series, error: null };
 }
 
 // PUBLIC_INTERFACE
 export function subscribeToBidsForEvent(eventId, onChange) {
-  /** Subscribe to any bid changes for the given event (insert/update/delete). */
+  /** Subscribe to event-level bid changes for realtime analytics refresh. */
   const channel = supabase
     .channel(`bids-changes-event-${eventId}`)
     .on(

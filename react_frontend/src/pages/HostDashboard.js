@@ -23,11 +23,7 @@ import {
 // PUBLIC_INTERFACE
 export default function HostDashboard() {
   /**
-   * Host dashboard to manage auction items and see current high bids.
-   * Realtime updates for item and event status changes.
-   * Event-level open/close uses events.status + events.is_open when available.
-   * Per-item close is tracked client-side for host convenience; when an item is closed client-side,
-   * we compute its winner and disable further bids visually.
+   * Host dashboard with winners and analytics.
    */
   const { eventId } = useParams();
   const [items, setItems] = useState([]);
@@ -39,13 +35,12 @@ export default function HostDashboard() {
   const [eventRow, setEventRow] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  // Per-item close: host-only client-side guard
   const [closedItems, setClosedItems] = useState({});
   const [winners, setWinners] = useState([]);
 
-  // Analytics state
-  const [tableRows, setTableRows] = useState([]); // { id, title, highest, count }
-  const [series, setSeries] = useState([]); // bids over time
+  // Analytics
+  const [tableRows, setTableRows] = useState([]);
+  const [series, setSeries] = useState([]);
   const bidsRealtimeUnsubRef = useRef(null);
 
   const sortedItems = useMemo(() => items.slice().sort((a, b) => (a.id > b.id ? 1 : -1)), [items]);
@@ -57,6 +52,26 @@ export default function HostDashboard() {
     setHighBids((prev) => ({ ...prev, [itemId]: data?.amount || null }));
   };
 
+  const refreshAnalytics = async () => {
+    if (!eventId) return;
+    const [{ data: highs }, { data: counts }, { data: ts }] = await Promise.all([
+      getHighestBidPerItem(eventId),
+      getBidCountsPerItem(eventId),
+      getBidsTimeSeries(eventId, { bucketSizeMs: 30_000, durationMs: 30 * 60 * 1000 })
+    ]);
+    const rows = (items || []).map(it => {
+      const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
+      return {
+        id: it.id,
+        title,
+        highest: highs ? highs[it.id] ?? Number(it.starting_bid || 0) : Number(it.starting_bid || 0),
+        count: counts ? (counts[it.id] || 0) : 0
+      };
+    });
+    setTableRows(rows);
+    setSeries(Array.isArray(ts) ? ts : []);
+  };
+
   const loadItems = async () => {
     setLoading(true);
     try {
@@ -65,7 +80,6 @@ export default function HostDashboard() {
       const list = Array.isArray(data) ? data : [];
       setItems(list);
       list.forEach((it) => refreshHighBid(it.id));
-      // Refresh analytics table and charts after loading items
       await refreshAnalytics();
     } catch (e) {
       setError(e?.message || 'Network error while loading items');
@@ -94,23 +108,26 @@ export default function HostDashboard() {
   useEffect(() => {
     loadEvent();
     loadItems();
+
     const unsubscribeItems = subscribeToItems(eventId, () => {
       loadItems();
     });
+
     const unsubscribeEvent = subscribeToEvent(eventId, async () => {
       await loadEvent();
       const latest = await getEventById(eventId);
       const latestStatus = getNormalizedEventStatus(latest?.data || null);
       if (latestStatus === 'closed') {
         refreshWinnersIfClosed(eventId);
+      } else {
+        setWinners([]);
       }
     });
-    // Bids realtime for event-level analytics refresh
+
     if (bidsRealtimeUnsubRef.current) {
       bidsRealtimeUnsubRef.current();
     }
     bidsRealtimeUnsubRef.current = subscribeToBidsForEvent(eventId, () => {
-      // Near real-time analytics refresh
       refreshAnalytics();
     });
 
@@ -129,33 +146,11 @@ export default function HostDashboard() {
     if (isClosed) {
       refreshWinnersIfClosed(eventId);
     } else {
-      // Clear winners if reopened
       setWinners([]);
       setClosedItems({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isClosed, eventId]);
-
-  const refreshAnalytics = async () => {
-    if (!eventId) return;
-    // Highest per item
-    const [{ data: highs }, { data: counts }, { data: ts }] = await Promise.all([
-      getHighestBidPerItem(eventId),
-      getBidCountsPerItem(eventId),
-      getBidsTimeSeries(eventId, { bucketSizeMs: 30000, durationMs: 30 * 60 * 1000 }) // 30s buckets, last 30 min
-    ]);
-    const rows = (items || []).map(it => {
-      const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
-      return {
-        id: it.id,
-        title,
-        highest: highs ? highs[it.id] ?? Number(it.starting_bid || 0) : Number(it.starting_bid || 0),
-        count: counts ? (counts[it.id] || 0) : 0
-      };
-    });
-    setTableRows(rows);
-    setSeries(Array.isArray(ts) ? ts : []);
-  };
 
   const handleAddItem = async (e) => {
     e.preventDefault();
@@ -190,8 +185,6 @@ export default function HostDashboard() {
   };
 
   const handleCloseItem = async (itemId) => {
-    // Client-side item close for host-only visualization. If schema supports server persistence (closed_at/is_open),
-    // this could be extended in future steps. For now we guard via UI and compute a winner snapshot.
     setClosedItems((prev) => ({ ...prev, [itemId]: true }));
     const { data } = await getWinnerForItem(itemId);
     setWinners((prev) => {
@@ -231,12 +224,10 @@ export default function HostDashboard() {
     setStatus('');
     setUpdatingStatus(true);
     try {
-      // Ensure we await the update completion
       const { error: err } = await updateAuctionStatus(eventId, 'closed');
       if (err) throw new Error(err.message || 'Failed to close auction');
       setStatus('Auction closed');
       await loadEvent();
-      // Short retry/backoff to avoid replica lag when fetching winners
       const attempts = [0, 300, 300];
       let winnersLoaded = false;
       for (let i = 0; i < attempts.length; i++) {
@@ -280,16 +271,8 @@ export default function HostDashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const thStyle = {
-    textAlign: 'left',
-    padding: '10px 8px',
-    borderBottom: '1px solid var(--border)',
-    color: 'var(--muted)',
-    fontWeight: 600
-  };
-  const tdStyle = {
-    padding: '10px 8px'
-  };
+  const thStyle = { textAlign: 'left', padding: '10px 8px', borderBottom: '1px solid var(--border)', color: 'var(--muted)', fontWeight: 600 };
+  const tdStyle = { padding: '10px 8px' };
 
   return (
     <div className="container page">
@@ -302,21 +285,14 @@ export default function HostDashboard() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card__header">
           <h3 className="card__title">Auction Controls</h3>
-          <span className={`badge ${isClosed ? '' : 'badge--primary'}`}>
-            Status: {auctionStatus}
-          </span>
+          <span className={`badge ${isClosed ? '' : 'badge--primary'}`}>Status: {auctionStatus}</span>
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn--primary" onClick={handleOpen} disabled={updatingStatus || !isClosed}>
-            Open Auction
-          </button>
-          <button className="btn btn--secondary" onClick={handleClose} disabled={updatingStatus || isClosed}>
-            Close Auction
-          </button>
+          <button className="btn btn--primary" onClick={handleOpen} disabled={updatingStatus || !isClosed}>Open Auction</button>
+          <button className="btn btn--secondary" onClick={handleClose} disabled={updatingStatus || isClosed}>Close Auction</button>
         </div>
         <div className="hint" style={{ marginTop: 8 }}>
-          Opening sets events.status='open' and events.is_open=true (if available).
-          Closing sets events.status='closed' and events.is_open=false (if available).
+          Opening sets events.status='open' and events.is_open=true (if available). Closing sets events.status='closed' and events.is_open=false (if available).
         </div>
       </div>
 
@@ -326,11 +302,7 @@ export default function HostDashboard() {
             <h3 className="card__title">Winners</h3>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span className="badge">Computed on close</span>
-              {winners.length > 0 && (
-                <button className="btn btn--secondary" onClick={exportCsv}>
-                  Export CSV
-                </button>
-              )}
+              {winners.length > 0 && (<button className="btn btn--secondary" onClick={exportCsv}>Export CSV</button>)}
             </div>
           </div>
           {winners.length === 0 ? (
@@ -351,9 +323,7 @@ export default function HostDashboard() {
               ))}
             </div>
           )}
-          <div className="hint" style={{ marginTop: 8 }}>
-            Winner = highest bid per item (ties resolved by earliest bid time).
-          </div>
+          <div className="hint" style={{ marginTop: 8 }}>Winner = highest bid per item (ties resolved by earliest bid time).</div>
         </div>
       )}
 
@@ -362,37 +332,15 @@ export default function HostDashboard() {
         <form onSubmit={handleAddItem} className="form form--inline">
           <div className="field">
             <label htmlFor="title" className="field__label">Title</label>
-            <input
-              id="title"
-              className="field__input"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              placeholder="e.g., Art Print #7"
-              required
-            />
+            <input id="title" className="field__input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g., Art Print #7" required />
           </div>
           <div className="field">
             <label htmlFor="desc" className="field__label">Description</label>
-            <input
-              id="desc"
-              className="field__input"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Short description"
-            />
+            <input id="desc" className="field__input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Short description" />
           </div>
           <div className="field">
             <label htmlFor="start" className="field__label">Starting bid</label>
-            <input
-              id="start"
-              type="number"
-              className="field__input"
-              value={form.starting_bid}
-              onChange={(e) => setForm({ ...form, starting_bid: e.target.value })}
-              min="0"
-              step="1"
-              placeholder="0"
-            />
+            <input id="start" type="number" className="field__input" value={form.starting_bid} onChange={(e) => setForm({ ...form, starting_bid: e.target.value })} min="0" step="1" placeholder="0" />
           </div>
           <button type="submit" className="btn btn--primary">Add</button>
         </form>
@@ -400,7 +348,6 @@ export default function HostDashboard() {
         {error ? <div className="alert alert--error">{error}</div> : null}
       </div>
 
-      {/* Analytics section */}
       <div className="grid" style={{ marginTop: 16 }}>
         <div className="col">
           <h3 className="section__title">Live Bidding Activity</h3>
@@ -410,15 +357,7 @@ export default function HostDashboard() {
               <span className="badge">Auto-updates</span>
             </div>
             {series && series.length > 0 ? (
-              <SimpleChart
-                type="area"
-                data={series}
-                width={680}
-                height={160}
-                color="var(--primary)"
-                bg="linear-gradient(120deg, rgba(37,99,235,0.04), rgba(255,255,255,1))"
-                ariaLabel="Bids over time"
-              />
+              <SimpleChart type="area" data={series} width={680} height={160} color="var(--primary)" bg="linear-gradient(120deg, rgba(37,99,235,0.04), rgba(255,255,255,1))" ariaLabel="Bids over time" />
             ) : (
               <p className="card__text">No recent bids yet. Activity will appear here in real time.</p>
             )}
@@ -432,15 +371,7 @@ export default function HostDashboard() {
               <span className="badge">Auto-updates</span>
             </div>
             {tableRows && tableRows.length > 0 && tableRows.some(r => r.count > 0) ? (
-              <SimpleChart
-                type="bar"
-                data={tableRows.map((r, idx) => ({ x: idx, y: r.count }))}
-                width={680}
-                height={160}
-                color="var(--secondary)"
-                bg="linear-gradient(120deg, rgba(245,158,11,0.05), rgba(255,255,255,1))"
-                ariaLabel="Bids per item"
-              />
+              <SimpleChart type="bar" data={tableRows.map((r, idx) => ({ x: idx, y: r.count }))} width={680} height={160} color="var(--secondary)" bg="linear-gradient(120deg, rgba(245,158,11,0.05), rgba(255,255,255,1))" ariaLabel="Bids per item" />
             ) : (
               <p className="card__text">No bids yet. Bars will appear as bids are placed.</p>
             )}
@@ -448,7 +379,6 @@ export default function HostDashboard() {
         </div>
       </div>
 
-      {/* Real-time items table */}
       <div className="card" style={{ marginTop: 16 }}>
         <div className="card__header">
           <h3 className="card__title">Real-time Items</h3>
@@ -470,9 +400,7 @@ export default function HostDashboard() {
                 {tableRows.map((row) => (
                   <tr key={row.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={tdStyle}>{row.title || 'Item'}</td>
-                    <td style={tdStyle}>
-                      <span className="badge badge--primary">{Number(row.highest || 0).toLocaleString()}</span>
-                    </td>
+                    <td style={tdStyle}><span className="badge badge--primary">{Number(row.highest || 0).toLocaleString()}</span></td>
                     <td style={tdStyle}>{Number(row.count || 0).toLocaleString()}</td>
                   </tr>
                 ))}
@@ -500,13 +428,9 @@ export default function HostDashboard() {
                     <h3 className="card__title">{it.title}</h3>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {!isClosed && !closedItems[it.id] && (
-                        <button className="btn btn--text btn--danger" onClick={() => handleCloseItem(it.id)}>
-                          Close Item
-                        </button>
+                        <button className="btn btn--text btn--danger" onClick={() => handleCloseItem(it.id)}>Close Item</button>
                       )}
-                      <button className="btn btn--text btn--danger" onClick={() => handleDeleteItem(it.id)}>
-                        Delete
-                      </button>
+                      <button className="btn btn--text btn--danger" onClick={() => handleDeleteItem(it.id)}>Delete</button>
                     </div>
                   </div>
                   {it.description ? <p className="card__text">{it.description}</p> : null}
