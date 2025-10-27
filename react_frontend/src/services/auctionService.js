@@ -234,6 +234,21 @@ export async function addItemWithImage(eventId, item, imageFile) {
   return addItem(eventId, item, imageFile);
 }
 
+/**
+ * PUBLIC_INTERFACE
+ * Update only the image for an existing item: uploads file and patches items.item_image_url.
+ */
+export async function updateItemImage(eventId, itemId, file) {
+  /** Uploads an image for an existing item and persists item_image_url without changing other fields. */
+  if (!eventId || !itemId || !file) {
+    return { data: null, error: new Error('Missing parameters') };
+  }
+  const { publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, itemId, file);
+  if (uploadErr) return { data: null, error: uploadErr };
+  const { data, error: patchErr } = await tryUpdateItemImageUrl(itemId, publicUrl);
+  return { data, error: patchErr || null };
+}
+
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
   /** List items for an event. */
@@ -651,5 +666,6 @@ export default {
   getBidCountsPerItem,
   getBidsTimeSeries,
   subscribeToBidsForEvent,
-  getItemDisplayFields
+  getItemDisplayFields,
+  updateItemImage
 };

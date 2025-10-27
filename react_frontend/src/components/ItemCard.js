@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 // PUBLIC_INTERFACE
-export default function ItemCard({ item, highBid, allowBid = false, onBid, onDelete }) {
+export default function ItemCard({ item, highBid, allowBid = false, onBid, onDelete, onAddImage }) {
   /**
    * Card for displaying an auction item.
    * Props:
@@ -44,11 +44,18 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
     <div className="card item-card" style={{ transition: 'transform var(--transition), box-shadow var(--transition)' }}>
       <div className="card__header">
         <h3 className="card__title">{displayTitle}</h3>
-        {onDelete && (
-          <button className="btn btn--text btn--danger" onClick={onDelete} aria-label="Delete item">
-            Delete
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {onAddImage && (
+            <button className="btn btn--text" onClick={onAddImage} aria-label="Add image to item">
+              Add Image
+            </button>
+          )}
+          {onDelete && (
+            <button className="btn btn--text btn--danger" onClick={onDelete} aria-label="Delete item">
+              Delete
+            </button>
+          )}
+        </div>
       </div>
       {item?.item_image_url ? (
         <img

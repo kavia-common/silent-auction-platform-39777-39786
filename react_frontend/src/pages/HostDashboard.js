@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import ItemCard from '../components/ItemCard';
 import SimpleChart from '../components/SimpleChart';
 import AddItemModal from '../components/AddItemModal.jsx';
+import ImageUploadModal from '../components/ImageUploadModal.jsx';
 import {
   addItem,
   deleteItem,
@@ -40,6 +41,8 @@ export default function HostDashboard() {
   const [closedItems, setClosedItems] = useState({});
   const [winners, setWinners] = useState([]);
   const [confetti, setConfetti] = useState([]);
+  const [imageModalOpen, setImageModalOpen] = useState(false);
+  const [selectedItemForImage, setSelectedItemForImage] = useState(null);
 
   // Analytics
   const [tableRows, setTableRows] = useState([]);
@@ -543,32 +546,14 @@ export default function HostDashboard() {
             {sortedItems.map((it) => {
               const disabled = !!closedItems[it.id] || isClosed;
               return (
-                <div key={it.id} className="card">
-                  <div className="card__header">
-                    <h3 className="card__title">{it.title}</h3>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {!isClosed && !closedItems[it.id] && (
-                        <button className="btn btn--text btn--danger" onClick={() => handleCloseItem(it.id)}>Close Item</button>
-                      )}
-                      <button className="btn btn--text btn--danger" onClick={() => handleDeleteItem(it.id)}>Delete</button>
-                    </div>
-                  </div>
-                  {it.item_image_url ? (
-                    <img
-                      src={it.item_image_url}
-                      alt={it.title ? `${it.title} image` : 'Item image'}
-                      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    />
-                  ) : null}
-                  {it.description ? <p className="card__text">{it.description}</p> : null}
-                  <div className="item-card__meta">
-                    <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>
-                    <span className="badge badge--primary">Current: {Number(highBids[it.id] ?? it.starting_bid ?? 0).toLocaleString()}</span>
-                    {closedItems[it.id] && !isClosed ? <span className="badge">Closed</span> : null}
-                  </div>
-                  <div className="hint">{disabled ? 'Bidding disabled for this item.' : 'Item is open for bidding.'}</div>
-                </div>
+                <ItemCard
+                  key={it.id}
+                  item={it}
+                  highBid={highBids[it.id] ?? null}
+                  allowBid={false}
+                  onDelete={() => handleDeleteItem(it.id)}
+                  onAddImage={() => { setSelectedItemForImage(it); setImageModalOpen(true); }}
+                />
               );
             })}
           </div>
@@ -579,6 +564,13 @@ export default function HostDashboard() {
         onClose={() => setAddOpen(false)}
         eventId={eventId}
         onAdded={() => { setAddOpen(false); loadItems(); }}
+      />
+      <ImageUploadModal
+        open={imageModalOpen}
+        onClose={() => { setImageModalOpen(false); setSelectedItemForImage(null); }}
+        eventId={eventId}
+        item={selectedItemForImage}
+        onUploaded={() => { setImageModalOpen(false); setSelectedItemForImage(null); loadItems(); }}
       />
     </div>
   );
