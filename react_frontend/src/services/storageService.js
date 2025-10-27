@@ -32,6 +32,19 @@ function buildPath({ eventId, itemId, ext }) {
 }
 
 /**
+ * Extract project ref for diagnostics.
+ */
+function getProjectRef() {
+  const url = process.env.REACT_APP_SUPABASE_URL || '';
+  try {
+    const host = new URL(url).host;
+    return host.split('.')[0] || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Verify that the configured bucket exists in Supabase Storage.
  * Throws a clear, actionable error if not found.
  */
@@ -41,26 +54,25 @@ export async function verifyBucketExists() {
    * Checks Supabase Storage for the configured bucket id (slug) and throws an Error if missing.
    * This prevents confusing 'bucket not found' errors and guides setup in the dashboard.
    */
+  const projectRef = getProjectRef();
   try {
     const { data, error } = await supabase.storage.listBuckets();
     if (error) {
-      // Surface underlying error while still guiding the developer
       // eslint-disable-next-line no-console
-      console.error('Failed to list Supabase storage buckets:', error);
+      console.error('[storage] Failed to list Supabase storage buckets:', error);
       throw new Error(
-        `Unable to verify storage buckets. Please check your Supabase credentials and permissions. Underlying error: ${error.message || String(error)}`
+        `Unable to verify storage buckets for project "${projectRef}". Underlying error: ${error.message || String(error)}`
       );
     }
     const exists = (data || []).some((b) => b.name === BUCKET_NAME);
     if (!exists) {
-      const msg = `Bucket not found: ${BUCKET_NAME}. Verify the bucket id (slug) in Supabase Storage matches this value.`;
+      const msg = `Bucket not found. Using slug "${BUCKET_NAME}" on project "${projectRef}". Verify the bucket id matches exactly in Supabase Storage.`;
       // eslint-disable-next-line no-console
-      console.error(msg);
+      console.error('[storage]', msg);
       throw new Error(msg);
     }
     return true;
   } catch (err) {
-    // Re-throw with clear message
     throw err;
   }
 }
@@ -88,12 +100,20 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
       .upload(path, file, { cacheControl: '3600', upsert: true });
 
     if (uploadError) {
-      return { path: null, publicUrl: null, error: uploadError };
+      const projectRef = getProjectRef();
+      const enhanced = new Error(
+        `Upload failed for bucket "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
+      );
+      return { path: null, publicUrl: null, error: enhanced };
     }
 
     const { data: pub, error: pubErr } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path);
     if (pubErr) {
-      return { path, publicUrl: null, error: pubErr };
+      const projectRef = getProjectRef();
+      const enhanced = new Error(
+        `Failed to retrieve public URL from bucket "${BUCKET_NAME}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
+      );
+      return { path, publicUrl: null, error: enhanced };
     }
 
     return { path, publicUrl: pub?.publicUrl || null, error: null };

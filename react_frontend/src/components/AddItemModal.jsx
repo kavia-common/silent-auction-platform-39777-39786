@@ -20,7 +20,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
 
-  // Config: bucket is env-configurable with default ('the auction images')
+  // Config: bucket slug used for API calls; label is for UI only
   const BUCKET = STORAGE_CONSTANTS.BUCKET_NAME;
   const MAX_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
   const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];

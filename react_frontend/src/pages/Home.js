@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { debugListBucket } from '../lib/debugStorage';
 import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
+import { validateBucket } from '../lib/validateBucket';
 
 // PUBLIC_INTERFACE
 export default function Home() {
@@ -21,11 +22,21 @@ export default function Home() {
 
     // eslint-disable-next-line no-console
     console.log('[DEBUG_STORAGE] Enabled. REACT_APP_SUPABASE_URL:', process.env.REACT_APP_SUPABASE_URL || '(not set)');
-    // eslint-disable-next-line no-console
-    console.log('[DEBUG_STORAGE] Invoking debugListBucket:', { bucket, prefix });
-
-    // Fire-and-forget; no state updates to avoid re-render loops.
-    debugListBucket(bucket, prefix);
+    // First, validate the bucket by attempting a list on root and logging definitive result.
+    (async () => {
+      try {
+        await validateBucket(bucket);
+        // eslint-disable-next-line no-console
+        console.log('[DEBUG_STORAGE] Bucket exists and is accessible:', bucket);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[DEBUG_STORAGE] Bucket validation failed:', e?.message || e);
+      }
+      // Then optionally list for quick visibility
+      // eslint-disable-next-line no-console
+      console.log('[DEBUG_STORAGE] Invoking debugListBucket:', { bucket, prefix });
+      debugListBucket(bucket, prefix);
+    })();
   }, []); // empty dependency array ensures this runs once
 
   return (
