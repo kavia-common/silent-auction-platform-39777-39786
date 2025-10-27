@@ -9,4 +9,4 @@
 export const AUCTION_IMAGES_BUCKET = 'the-auction-images';
 
 // PUBLIC_INTERFACE
-export const AUCTION_IMAGES_LABEL = 'the auction images';
+export const AUCTION_IMAGES_LABEL = 'the-auction-images';

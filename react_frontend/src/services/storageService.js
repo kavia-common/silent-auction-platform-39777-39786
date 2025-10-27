@@ -1,9 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
-// Use the centralized bucket id (slug) for all API calls. Do not change this without updating constants.
-const BUCKET_NAME = AUCTION_IMAGES_BUCKET;
-
 /**
  * Derive an extension string from a filename or MIME type.
  */
@@ -64,9 +61,9 @@ export async function verifyBucketExists() {
         `Unable to verify storage buckets for project "${projectRef}". Underlying error: ${error.message || String(error)}`
       );
     }
-    const exists = (data || []).some((b) => b.name === BUCKET_NAME);
+    const exists = (data || []).some((b) => b.name === AUCTION_IMAGES_BUCKET);
     if (!exists) {
-      const msg = `Bucket not found for slug "${BUCKET_NAME}" on project "${projectRef}". Confirm the bucket ID exactly matches the slug in your Supabase dashboard (Storage > Buckets).`;
+      const msg = `Bucket not found for slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Confirm the bucket ID exactly matches the slug in your Supabase dashboard (Storage > Buckets).`;
       // eslint-disable-next-line no-console
       console.error('[storage]', msg);
       throw new Error(msg);
@@ -96,22 +93,22 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
 
     // Note: upsert true allows replacement if user re-uploads for same item quickly
     const { error: uploadError } = await supabase.storage
-      .from(BUCKET_NAME)
+      .from(AUCTION_IMAGES_BUCKET)
       .upload(path, file, { cacheControl: '3600', upsert: true });
 
     if (uploadError) {
       const projectRef = getProjectRef();
       const enhanced = new Error(
-        `Upload failed to bucket slug "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
+        `Upload failed to bucket slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
       );
       return { path: null, publicUrl: null, error: enhanced };
     }
 
-    const { data: pub, error: pubErr } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path);
+    const { data: pub, error: pubErr } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
     if (pubErr) {
       const projectRef = getProjectRef();
       const enhanced = new Error(
-        `Failed to retrieve public URL from bucket slug "${BUCKET_NAME}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
+        `Failed to retrieve public URL from bucket slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
       );
       return { path, publicUrl: null, error: enhanced };
     }
@@ -122,10 +119,7 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
   }
 }
 
-export const STORAGE_CONSTANTS = { BUCKET_NAME };
-
 export default {
   uploadPublicImageToBucket,
   verifyBucketExists,
-  STORAGE_CONSTANTS,
 };

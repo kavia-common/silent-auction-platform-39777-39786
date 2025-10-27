@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
 import { supabase } from '../lib/supabaseClient';
-import { verifyBucketExists, STORAGE_CONSTANTS } from '../services/storageService';
-import { AUCTION_IMAGES_LABEL } from '../constants/storage';
+import { verifyBucketExists } from '../services/storageService';
+import { AUCTION_IMAGES_LABEL, AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 /**
  * Refactored AddItemModal:
@@ -21,7 +21,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   const fileInputRef = useRef(null);
 
   // Config: bucket slug used for API calls; label is for UI only
-  const BUCKET = STORAGE_CONSTANTS.BUCKET_NAME;
+  const BUCKET = AUCTION_IMAGES_BUCKET;
   const MAX_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
   const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
 
