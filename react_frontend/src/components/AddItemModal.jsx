@@ -5,13 +5,10 @@ import { addItem } from '../services/auctionService';
 // PUBLIC_INTERFACE
 export default function AddItemModal({ open, onClose, eventId, onAdded }) {
   /**
-   * Modal to add an item with a single 'Add Image' control (optional).
-   * Handles image preview, disabled states while uploading/adding, and errors.
-   * Props:
-   * - open: boolean
-   * - onClose: function
-   * - eventId: string (required)
-   * - onAdded: function(item) called on success
+   * Modal to add an item with image upload (optional).
+   * - Clicking 'Add Image' opens hidden file input (no focus shift to description).
+   * - Shows preview and progress.
+   * - Disables UI while uploading/saving.
    */
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -23,6 +20,7 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef(null);
 
+  // Reset state when modal closes
   useEffect(() => {
     if (!open) {
       setTitle('');
@@ -40,8 +38,14 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
     const f = e.target.files?.[0] || null;
     setImageFile(f || null);
     setPreviewUrl(f ? URL.createObjectURL(f) : '');
-    // Reset progress on new pick
     setUploadProgress(0);
+  };
+
+  const triggerFilePicker = () => {
+    // Programmatically open file picker
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
   const canSubmit = useMemo(() => {
@@ -62,7 +66,6 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
     setBusy(true);
     setUploadProgress(imageFile ? 10 : 0);
     try {
-      // auctionService.addItem handles optional image upload to storage and item_image_url persistence
       const { data, error: addErr } = await addItem(
         eventId,
         {
@@ -73,11 +76,9 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
         imageFile || undefined
       );
 
-      // Simulate minimal progress feedback since Supabase JS upload doesn't expose progress callbacks here
       if (imageFile) setUploadProgress(90);
 
       if (addErr) {
-        // Keep item created but warn the user about image upload failure
         if (data) {
           onAdded && onAdded(data);
         }
@@ -90,7 +91,7 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
       setError(e2?.message || 'Failed to add item');
     } finally {
       setUploadProgress(100);
-      setTimeout(() => setBusy(false), 150); // small delay for smoother UX
+      setTimeout(() => setBusy(false), 150);
     }
   };
 
@@ -145,17 +146,36 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
         </div>
 
         <div className="field">
-          <label htmlFor="ai-image" className="field__label">Add Image</label>
+          <label className="field__label">Image</label>
+
+          {/* Hidden file input */}
           <input
-            id="ai-image"
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            className="field__input"
             onChange={onPickFile}
-            aria-describedby="ai-image-hint"
+            style={{ display: 'none' }}
+            aria-hidden="true"
+            tabIndex={-1}
             disabled={busy}
           />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn--text"
+              onClick={triggerFilePicker}
+              disabled={busy}
+              aria-describedby="ai-image-hint"
+            >
+              Add Image
+            </button>
+            {imageFile ? (
+              <span className="hint">{imageFile.name}</span>
+            ) : (
+              <span className="hint">Optional</span>
+            )}
+          </div>
           <div id="ai-image-hint" className="hint">PNG/JPG up to a few MB. Preview below; image will be visible to bidders.</div>
         </div>
 
@@ -166,6 +186,7 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
               src={previewUrl}
               alt={title ? `Preview of ${title}` : 'Image preview'}
               style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
           </div>
         ) : null}
