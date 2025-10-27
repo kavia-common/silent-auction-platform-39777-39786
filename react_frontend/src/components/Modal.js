@@ -11,8 +11,14 @@ export default function Modal({ open, title, children, onClose, footer }) {
 
   if (!open) return null;
   return (
-    <div className="modal__backdrop" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal__backdrop" onClick={onClose} aria-hidden="true">
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || 'Dialog'}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal__header">
           <h3 className="modal__title">{title}</h3>
           <button className="btn btn--text" aria-label="Close modal" onClick={onClose}>✕</button>

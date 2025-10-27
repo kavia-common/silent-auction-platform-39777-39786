@@ -402,7 +402,23 @@ export default function HostDashboard() {
       )}
 
       <div className="card">
-        <h3 className="card__title">Add Item</h3>
+        <div className="card__header" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 className="card__title">Add Item</h3>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => setAddOpen(true)}
+              aria-label="Open Add Item modal with image upload"
+              title="Add Item with Image"
+            >
+              Add Item (with Image)
+            </button>
+          </div>
+        </div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          Tip: Use “Add Item (with Image)” to attach a photo. Or use the quick form below without images.
+        </div>
         <form onSubmit={handleAddItem} className="form form--inline">
           <div className="field">
             <label htmlFor="title" className="field__label">Title</label>

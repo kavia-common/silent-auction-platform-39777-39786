@@ -82,7 +82,7 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
     <>
       <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
       <button className="btn btn--primary" onClick={onSubmit} disabled={!canSubmit}>
-        {busy ? 'Adding...' : 'Add Item'}
+        {busy ? 'Adding...' : (imageFile ? 'Add Item with Image' : 'Add Item')}
       </button>
     </>
   );
@@ -116,7 +116,7 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
             onChange={onPickFile}
             aria-describedby="ai-image-hint"
           />
-          <div id="ai-image-hint" className="hint">PNG/JPG up to a few MB. Uploaded to public storage.</div>
+          <div id="ai-image-hint" className="hint">PNG/JPG up to a few MB. This will show a preview and be visible to bidders.</div>
         </div>
 
         {previewUrl ? (
