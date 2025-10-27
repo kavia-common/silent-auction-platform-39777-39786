@@ -11,6 +11,7 @@ import HostDashboard from './pages/HostDashboard';
 import BidderView from './pages/BidderView';
 import MagicLinkCallback from './pages/MagicLinkCallback';
 import MinimalImageUploadPage from './pages/MinimalImageUploadPage';
+import StorageProbe from './pages/StorageProbe';
 
 /**
  * PUBLIC_INTERFACE
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/event/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
           <Route path="/bid/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
           <Route path="/minimal-upload" element={<MinimalImageUploadPage />} />
+          <Route path="/_probe/storage" element={<StorageProbe />} />
           <Route
             path="*"
             element={

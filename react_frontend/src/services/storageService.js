@@ -42,6 +42,34 @@ function getProjectRef() {
 }
 
 /**
+ * Minimal runtime probe to distinguish bucket-not-found vs permission errors.
+ * Uses list('') on the target bucket to see whether the bucket responds.
+ */
+async function probeBucketAccess() {
+  try {
+    const { data, error } = await supabase.storage.from(AUCTION_IMAGES_BUCKET).list('');
+    if (error) {
+      const msg = (error.message || '').toLowerCase();
+      // Common @supabase-js messages include 'bucket not found', 401, or 403 references
+      if (msg.includes('not found')) {
+        return { ok: false, kind: 'not_found', error };
+      }
+      if (msg.includes('unauthorized') || msg.includes('401')) {
+        return { ok: false, kind: 'unauthorized', error };
+      }
+      if (msg.includes('forbidden') || msg.includes('permission') || msg.includes('403')) {
+        return { ok: false, kind: 'forbidden', error };
+      }
+      return { ok: false, kind: 'other', error };
+    }
+    // If listing returns with data and no error, access is OK
+    return { ok: true, kind: 'ok', data };
+  } catch (e) {
+    return { ok: false, kind: 'exception', error: e };
+  }
+}
+
+/**
  * Verify that the configured bucket exists in Supabase Storage.
  * Throws a clear, actionable error if not found.
  */
@@ -52,26 +80,52 @@ export async function verifyBucketExists() {
    * This prevents confusing 'Bucket not found' errors and guides setup in the dashboard.
    */
   const projectRef = getProjectRef();
-  try {
-    const { data, error } = await supabase.storage.listBuckets();
-    if (error) {
-      // eslint-disable-next-line no-console
-      console.error('[storage] Failed to list Supabase storage buckets:', error);
+  // First try an explicit listBuckets to confirm presence by name
+  const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
+  if (listErr) {
+    // eslint-disable-next-line no-console
+    console.error('[storage] Failed to list Supabase storage buckets:', listErr);
+    throw new Error(
+      `Unable to verify storage buckets for project "${projectRef}". Underlying error: ${listErr.message || String(listErr)}`
+    );
+  }
+  const exists = (buckets || []).some((b) => b.name === AUCTION_IMAGES_BUCKET);
+  if (!exists) {
+    // Double-check using .list('') to differentiate 404 vs permission issues
+    const probe = await probeBucketAccess();
+    if (probe.kind === 'not_found') {
       throw new Error(
-        `Unable to verify storage buckets for project "${projectRef}". Underlying error: ${error.message || String(error)}`
+        `Bucket not found for slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Confirm the bucket ID exactly matches in Supabase (Storage > Buckets).`
       );
     }
-    const exists = (data || []).some((b) => b.name === AUCTION_IMAGES_BUCKET);
-    if (!exists) {
-      const msg = `Bucket not found for slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Confirm the bucket ID exactly matches the slug in your Supabase dashboard (Storage > Buckets).`;
-      // eslint-disable-next-line no-console
-      console.error('[storage]', msg);
-      throw new Error(msg);
+    if (probe.kind === 'unauthorized' || probe.kind === 'forbidden') {
+      throw new Error(
+        `Access denied for bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Ensure your Storage policies and bucket public setting allow anon upload/list as intended.`
+      );
     }
-    return true;
-  } catch (err) {
-    throw err;
+    throw new Error(
+      `Unable to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${probe.error?.message || 'Unknown error'}`
+    );
   }
+  // If listBuckets says it exists, still run a probe to detect permission problems early
+  const probe = await probeBucketAccess();
+  if (!probe.ok) {
+    if (probe.kind === 'unauthorized' || probe.kind === 'forbidden') {
+      throw new Error(
+        `Bucket "${AUCTION_IMAGES_BUCKET}" exists but access is forbidden for project "${projectRef}". Update Storage policies or mark the bucket public if required.`
+      );
+    }
+    if (probe.kind === 'not_found') {
+      // Rare: race; surface as not found
+      throw new Error(
+        `Bucket "${AUCTION_IMAGES_BUCKET}" reported by listBuckets but could not be listed. It may have been removed or renamed.`
+      );
+    }
+    throw new Error(
+      `Bucket "${AUCTION_IMAGES_BUCKET}" probe failed: ${probe.error?.message || 'Unknown error'}`
+    );
+  }
+  return true;
 }
 
 /**
@@ -98,8 +152,15 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
 
     if (uploadError) {
       const projectRef = getProjectRef();
+      const msg = (uploadError.message || '').toLowerCase();
+      let hint = '';
+      if (msg.includes('not found')) {
+        hint = `Bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify the slug in Supabase dashboard.`;
+      } else if (msg.includes('unauthorized') || msg.includes('forbidden')) {
+        hint = `Access denied. Check Storage policies and whether the bucket is public if you expect anonymous uploads.`;
+      }
       const enhanced = new Error(
-        `Upload failed to bucket slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
+        `Upload failed to bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${uploadError.message || ''} ${hint}`.trim()
       );
       return { path: null, publicUrl: null, error: enhanced };
     }
