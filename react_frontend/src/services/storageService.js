@@ -66,7 +66,7 @@ export async function verifyBucketExists() {
     }
     const exists = (data || []).some((b) => b.name === BUCKET_NAME);
     if (!exists) {
-      const msg = `Bucket not found. Using slug "${BUCKET_NAME}" on project "${projectRef}". Confirm the bucket ID in your Supabase dashboard (Storage > Buckets).`;
+      const msg = `Bucket not found for slug "${BUCKET_NAME}" on project "${projectRef}". Confirm the bucket ID exactly matches the slug in your Supabase dashboard (Storage > Buckets).`;
       // eslint-disable-next-line no-console
       console.error('[storage]', msg);
       throw new Error(msg);
@@ -102,7 +102,7 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
     if (uploadError) {
       const projectRef = getProjectRef();
       const enhanced = new Error(
-        `Upload failed to bucket "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
+        `Upload failed to bucket slug "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
       );
       return { path: null, publicUrl: null, error: enhanced };
     }
@@ -111,7 +111,7 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
     if (pubErr) {
       const projectRef = getProjectRef();
       const enhanced = new Error(
-        `Failed to retrieve public URL from bucket "${BUCKET_NAME}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
+        `Failed to retrieve public URL from bucket slug "${BUCKET_NAME}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
       );
       return { path, publicUrl: null, error: enhanced };
     }
