@@ -9,6 +9,16 @@ This project provides a minimal React template with a clean, modern UI and minim
 - **Fast**: Minimal dependencies for quick loading times
 - **Simple**: Easy to understand and modify
 
+## Environment Variables
+
+Create a `.env` file inside `react_frontend` with:
+
+REACT_APP_SUPABASE_URL=<your supabase url>
+REACT_APP_SUPABASE_KEY=<your supabase anon/public key>
+
+# Optional: enable extra storage logging for local troubleshooting (not recommended for prod)
+# REACT_APP_DEBUG_STORAGE=true
+
 ## Getting Started
 
 In the project directory, you can run:

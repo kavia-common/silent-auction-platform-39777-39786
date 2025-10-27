@@ -1,43 +1,17 @@
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { debugListBucket } from '../lib/debugStorage';
-import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
-import { validateBucket } from '../lib/validateBucket';
 
-// PUBLIC_INTERFACE
+/**
+ * PUBLIC_INTERFACE
+ * Minimal landing page with two buttons: Create and Join.
+ * Cleaned up to remove temporary storage debug code and bucket validation.
+ */
 export default function Home() {
-  /**
-   * Minimal landing page with two buttons: Create and Join.
-   * Also contains a temporary, env-guarded debug effect to list Supabase Storage contents.
-   */
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Gate the entire effect behind the env flag to avoid noise.
-    const debugEnabled = String(process.env.REACT_APP_DEBUG_STORAGE || '').toLowerCase() === 'true';
-    if (!debugEnabled) return;
-
-    const bucket = AUCTION_IMAGES_BUCKET;
-    const prefix = undefined; // e.g., 'public/' or 'events/<id>/' if desired
-
-    // eslint-disable-next-line no-console
-    console.log('[DEBUG_STORAGE] Enabled. Using bucket slug:', bucket, 'Project URL host:', (() => { try { return new URL(process.env.REACT_APP_SUPABASE_URL || '').host; } catch { return '(invalid or not set)'; }})());
-    // First, validate the bucket by attempting a list on root and logging definitive result.
-    (async () => {
-      try {
-        await validateBucket(bucket);
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG_STORAGE] Bucket exists and is accessible:', bucket);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('[DEBUG_STORAGE] Bucket validation failed:', e?.message || e);
-      }
-      // Then optionally list for quick visibility
-      // eslint-disable-next-line no-console
-      console.log('[DEBUG_STORAGE] Invoking debugListBucket:', { bucket, prefix });
-      debugListBucket(bucket, prefix);
-    })();
-  }, []); // empty dependency array ensures this runs once
+    // Home mount side-effects (none)
+  }, []);
 
   return (
     <div className="container page">

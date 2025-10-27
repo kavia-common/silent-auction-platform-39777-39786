@@ -30,7 +30,7 @@ export default function MinimalImageUploader({ eventId, itemId, onComplete }) {
       if (result.error) {
         setStatus(result.error.message || 'Upload failed');
       } else {
-        setStatus('Upload complete');
+        setStatus('Image uploaded successfully.');
       }
       if (typeof onComplete === 'function') onComplete(result);
     } catch (e) {

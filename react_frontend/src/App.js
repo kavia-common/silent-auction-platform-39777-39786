@@ -1,5 +1,4 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useEffect } from 'react';
 import './App.css';
 
 import Navbar from './components/Navbar';
@@ -12,28 +11,13 @@ import HostDashboard from './pages/HostDashboard';
 import BidderView from './pages/BidderView';
 import MagicLinkCallback from './pages/MagicLinkCallback';
 import MinimalImageUploadPage from './pages/MinimalImageUploadPage';
-import { validateBucket } from './lib/validateBucket';
-import { AUCTION_IMAGES_BUCKET } from './constants/storage';
 
-// PUBLIC_INTERFACE
+/**
+ * PUBLIC_INTERFACE
+ * Router container for the Silent Auction app.
+ * Debug storage validation removed; app runs without debug side effects.
+ */
 export default function App() {
-  /** Router container for the Silent Auction app. Also triggers optional storage validation on app load. */
-  useEffect(() => {
-    const debugEnabled = String(process.env.REACT_APP_DEBUG_STORAGE || '').toLowerCase() === 'true';
-    if (!debugEnabled) return;
-
-    (async () => {
-      try {
-        await validateBucket(AUCTION_IMAGES_BUCKET);
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG_STORAGE] App boot storage validation passed for', AUCTION_IMAGES_BUCKET);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('[DEBUG_STORAGE] App boot storage validation failed:', e?.message || e);
-      }
-    })();
-  }, []);
-
   return (
     <div className="app-root">
       <Navbar />
@@ -52,14 +36,17 @@ export default function App() {
           <Route path="/event/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
           <Route path="/bid/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
           <Route path="/minimal-upload" element={<MinimalImageUploadPage />} />
-          <Route path="*" element={
-            <div className="container page">
-              <div className="card">
-                <h2 className="card__title">Not Found</h2>
-                <p className="card__text">The page you are looking for does not exist.</p>
+          <Route
+            path="*"
+            element={
+              <div className="container page">
+                <div className="card">
+                  <h2 className="card__title">Not Found</h2>
+                  <p className="card__text">The page you are looking for does not exist.</p>
+                </div>
               </div>
-            </div>
-          } />
+            }
+          />
         </Routes>
       </main>
     </div>
