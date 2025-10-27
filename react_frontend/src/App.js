@@ -10,6 +10,7 @@ import JoinEventName from './pages/JoinEventName';
 import HostDashboard from './pages/HostDashboard';
 import BidderView from './pages/BidderView';
 import MagicLinkCallback from './pages/MagicLinkCallback';
+import MinimalImageUploadPage from './pages/MinimalImageUploadPage';
 
 // PUBLIC_INTERFACE
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/auction/:eventCode" element={<BidderView />} />
           <Route path="/event/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
           <Route path="/bid/:eventCode" element={<Navigate to="/auction/:eventCode" replace />} />
+          <Route path="/minimal-upload" element={<MinimalImageUploadPage />} />
           <Route path="*" element={
             <div className="container page">
               <div className="card">
