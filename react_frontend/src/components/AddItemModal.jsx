@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
 import { supabase } from '../lib/supabaseClient';
+import { verifyBucketExists, STORAGE_CONSTANTS } from '../services/storageService';
 
 /**
  * Refactored AddItemModal:
  * - Simplified to ONLY show a single image upload.
  * - No title/description/starting bid; does not persist any item data.
- * - Validates image type and size, uploads to Supabase Storage bucket 'auction-images',
- *   and displays the public URL + preview.
+ * - Validates image type and size, uploads to Supabase Storage, and displays the public URL + preview.
  */
 // PUBLIC_INTERFACE
 export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
@@ -19,8 +19,8 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
 
-  // Config
-  const BUCKET = 'auction-images';
+  // Config: bucket is env-configurable with default ('the auction images')
+  const BUCKET = STORAGE_CONSTANTS.BUCKET_NAME;
   const MAX_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
   const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
 
@@ -32,10 +32,22 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
       setError('');
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
     }
+    // When modal opens, verify bucket exists for clearer UX
+    (async () => {
+      try {
+        await verifyBucketExists();
+      } catch (err) {
+        // Surface the message to both console and UI
+        // eslint-disable-next-line no-console
+        console.error(err);
+        setError(err?.message || 'Storage bucket verification failed.');
+      }
+    })();
   }, [open]);
 
-  const canUpload = useMemo(() => !!(open && eventId && file && !busy), [open, eventId, file, busy]);
+  const canUpload = useMemo(() => !!(open && eventId && file && !busy && !error), [open, eventId, file, busy, error]);
 
   const triggerFilePicker = () => {
     if (fileInputRef.current) fileInputRef.current.click();
@@ -91,6 +103,9 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
 
     setBusy(true);
     try {
+      // Ensure bucket exists again right before upload, in case user changed env or project state
+      await verifyBucketExists();
+
       const path = buildPath(file);
       const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
@@ -160,6 +175,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
             )}
           </div>
           <div id="ai-image-hint" className="hint">Only a single image is required.</div>
+          <div className="hint">Uploads use storage bucket: <strong>{BUCKET}</strong></div>
         </div>
 
         {previewUrl ? (

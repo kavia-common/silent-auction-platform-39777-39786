@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 
-const BUCKET_NAME = 'auction-images';
+// Resolve bucket name from env with default fallback (spaces are intentional)
+const BUCKET_NAME = process.env.REACT_APP_SUPABASE_BUCKET_NAME?.trim() || 'the auction images';
 
 /**
  * Derive an extension string from a filename or MIME type.
@@ -30,16 +31,53 @@ function buildPath({ eventId, itemId, ext }) {
 }
 
 /**
+ * Verify that the configured bucket exists in Supabase Storage.
+ * Throws a clear, actionable error if not found.
+ */
+// PUBLIC_INTERFACE
+export async function verifyBucketExists() {
+  /**
+   * Checks Supabase Storage for the configured bucket name and throws an Error if missing.
+   * This prevents confusing 'bucket not found' errors and guides setup in the dashboard.
+   */
+  try {
+    const { data, error } = await supabase.storage.listBuckets();
+    if (error) {
+      // Surface underlying error while still guiding the developer
+      // eslint-disable-next-line no-console
+      console.error('Failed to list Supabase storage buckets:', error);
+      throw new Error(
+        `Unable to verify storage buckets. Please check your Supabase credentials and permissions. Underlying error: ${error.message || String(error)}`
+      );
+    }
+    const exists = (data || []).some((b) => b.name === BUCKET_NAME);
+    if (!exists) {
+      const msg = `Supabase Storage bucket not found: "${BUCKET_NAME}". Create this bucket in the Supabase dashboard (Storage -> Create new bucket) and ensure its name matches exactly, including spaces.`;
+      // eslint-disable-next-line no-console
+      console.error(msg);
+      throw new Error(msg);
+    }
+    return true;
+  } catch (err) {
+    // Re-throw with clear message
+    throw err;
+  }
+}
+
+/**
  * Upload a file to the public bucket and return { path, publicUrl, error }.
  * File is expected to be a browser File or Blob with an optional name/type.
  */
 // PUBLIC_INTERFACE
 export async function uploadPublicImageToBucket(eventId, itemId, file) {
-  /** Uploads an image to the public 'item-images' bucket and returns its public URL. */
+  /** Uploads an image to the configured public bucket and returns its public URL. */
   if (!file || !eventId || !itemId) {
     return { path: null, publicUrl: null, error: new Error('Missing required parameters') };
   }
   try {
+    // Ensure bucket exists first for clearer error feedback
+    await verifyBucketExists();
+
     const ext = deriveExtension(file);
     const path = buildPath({ eventId, itemId, ext });
 
@@ -67,5 +105,6 @@ export const STORAGE_CONSTANTS = { BUCKET_NAME };
 
 export default {
   uploadPublicImageToBucket,
+  verifyBucketExists,
   STORAGE_CONSTANTS,
 };
