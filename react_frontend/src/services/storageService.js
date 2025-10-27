@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 
-const BUCKET_NAME = 'item-images';
+const BUCKET_NAME = 'auction-images';
 
 /**
  * Derive an extension string from a filename or MIME type.

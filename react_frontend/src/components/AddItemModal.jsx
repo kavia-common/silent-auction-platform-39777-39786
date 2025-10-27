@@ -1,159 +1,142 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
-import { addItem } from '../services/auctionService';
+import { supabase } from '../lib/supabaseClient';
 
+/**
+ * Refactored AddItemModal:
+ * - Simplified to ONLY show a single image upload.
+ * - No title/description/starting bid; does not persist any item data.
+ * - Validates image type and size, uploads to Supabase Storage bucket 'auction-images',
+ *   and displays the public URL + preview.
+ */
 // PUBLIC_INTERFACE
-export default function AddItemModal({ open, onClose, eventId, onAdded }) {
-  /**
-   * Modal to add an item with image upload (optional).
-   * - Clicking 'Add Image' opens hidden file input (no focus shift to description).
-   * - Shows preview and progress.
-   * - Disables UI while uploading/saving.
-   */
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [startingBid, setStartingBid] = useState(0);
-  const [imageFile, setImageFile] = useState(null);
+export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
+  /** Simple image upload dialog for a single image file. */
+  const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [uploadedUrl, setUploadedUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef(null);
 
-  // Reset state when modal closes
+  // Config
+  const BUCKET = 'auction-images';
+  const MAX_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
+  const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+
   useEffect(() => {
     if (!open) {
-      setTitle('');
-      setDescription('');
-      setStartingBid(0);
-      setImageFile(null);
+      setFile(null);
       setPreviewUrl('');
+      setUploadedUrl('');
       setError('');
-      setUploadProgress(0);
+      setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, [open]);
 
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0] || null;
-    setImageFile(f || null);
-    setPreviewUrl(f ? URL.createObjectURL(f) : '');
-    setUploadProgress(0);
-  };
+  const canUpload = useMemo(() => !!(open && eventId && file && !busy), [open, eventId, file, busy]);
 
   const triggerFilePicker = () => {
-    // Programmatically open file picker
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
+    if (fileInputRef.current) fileInputRef.current.click();
   };
 
-  const canSubmit = useMemo(() => {
-    return !busy && title.trim().length > 0 && !!eventId;
-  }, [busy, title, eventId]);
+  const validateFile = (f) => {
+    if (!f) return 'Please select an image file.';
+    if (f.size > MAX_SIZE_BYTES) return `File too large. Max ${Math.round(MAX_SIZE_BYTES / (1024 * 1024))} MB.`;
+    // If type is missing (some browsers), fall back to basic extension test
+    const typeOk = f.type ? ACCEPTED_TYPES.includes(f.type) : /\.(png|jpe?g|webp|gif)$/i.test(f.name || '');
+    if (!typeOk) return 'Unsupported file type. Please upload PNG, JPG, WEBP, or GIF.';
+    return '';
+  };
 
-  const onSubmit = async (e) => {
+  const onPick = (e) => {
+    const f = e.target.files?.[0] || null;
+    const msg = validateFile(f);
+    if (msg) {
+      setError(msg);
+      setFile(null);
+      setPreviewUrl('');
+      return;
+    }
+    setError('');
+    setFile(f);
+    setPreviewUrl(f ? URL.createObjectURL(f) : '');
+  };
+
+  const buildPath = (f) => {
+    const ext = (f?.name?.split('.')?.pop() || 'jpg').replace(/[^a-z0-9]/gi, '') || 'jpg';
+    const safeEvent = String(eventId || '').replace(/[^a-zA-Z0-9-_]/g, '');
+    const stamp = Date.now();
+    return `${safeEvent}/${stamp}.${ext}`;
+  };
+
+  const onUpload = async (e) => {
     e.preventDefault();
     setError('');
+    setUploadedUrl('');
     if (!eventId) {
-      setError('Missing event context');
+      setError('Missing event context.');
       return;
     }
-    if (!title.trim()) {
-      setError('Item title is required');
+    if (!file) {
+      setError('Please choose an image first.');
       return;
     }
+    const msg = validateFile(file);
+    if (msg) {
+      setError(msg);
+      return;
+    }
+
     setBusy(true);
-    setUploadProgress(imageFile ? 10 : 0);
     try {
-      const { data, error: addErr } = await addItem(
-        eventId,
-        {
-          title: title.trim(),
-          description: description.trim(),
-          starting_bid: Number(startingBid || 0),
-        },
-        imageFile || undefined
-      );
+      const path = buildPath(file);
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, file, { cacheControl: '3600', upsert: true });
 
-      if (imageFile) setUploadProgress(90);
-
-      if (addErr) {
-        if (data) {
-          onAdded && onAdded(data);
-        }
-        setError(addErr.message || 'Item created but image upload failed');
-      } else {
-        onAdded && onAdded(data);
-        onClose && onClose();
+      if (uploadErr) {
+        setError(uploadErr.message || 'Failed to upload image.');
+        return;
       }
-    } catch (e2) {
-      setError(e2?.message || 'Failed to add item');
+
+      const { data: pub, error: pubErr } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      if (pubErr) {
+        setError(pubErr.message || 'Failed to get public URL.');
+        return;
+      }
+
+      const publicUrl = pub?.publicUrl || '';
+      setUploadedUrl(publicUrl);
+      if (typeof onUploaded === 'function') onUploaded(publicUrl);
+    } catch (ex) {
+      setError(ex?.message || 'Unexpected error during upload.');
     } finally {
-      setUploadProgress(100);
-      setTimeout(() => setBusy(false), 150);
+      setBusy(false);
     }
   };
 
   const footer = (
     <>
-      <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-      <button className="btn btn--primary" onClick={onSubmit} disabled={!canSubmit}>
-        {busy ? (imageFile ? 'Uploading...' : 'Adding...') : 'Add Item'}
+      <button className="btn" onClick={onClose} disabled={busy}>Close</button>
+      <button className="btn btn--primary" onClick={onUpload} disabled={!canUpload}>
+        {busy ? 'Uploading...' : 'Upload Image'}
       </button>
     </>
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Item" footer={footer}>
-      <form className="form" onSubmit={onSubmit}>
-        <div className="field">
-          <label htmlFor="ai-title" className="field__label">Title</label>
-          <input
-            id="ai-title"
-            className="field__input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-            disabled={busy}
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="ai-desc" className="field__label">Description</label>
-          <input
-            id="ai-desc"
-            className="field__input"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short description"
-            disabled={busy}
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="ai-start" className="field__label">Starting bid</label>
-          <input
-            id="ai-start"
-            type="number"
-            min="0"
-            step="1"
-            className="field__input"
-            value={startingBid}
-            onChange={(e) => setStartingBid(e.target.value)}
-            disabled={busy}
-          />
-        </div>
-
+    <Modal open={open} onClose={onClose} title="Upload Image" footer={footer}>
+      <form className="form" onSubmit={onUpload}>
         <div className="field">
           <label className="field__label">Image</label>
 
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            onChange={onPickFile}
+            onChange={onPick}
             style={{ display: 'none' }}
             aria-hidden="true"
             tabIndex={-1}
@@ -168,15 +151,15 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
               disabled={busy}
               aria-describedby="ai-image-hint"
             >
-              Add Image
+              Choose Image
             </button>
-            {imageFile ? (
-              <span className="hint">{imageFile.name}</span>
+            {file ? (
+              <span className="hint">{file.name}</span>
             ) : (
-              <span className="hint">Optional</span>
+              <span className="hint">PNG/JPG/WEBP/GIF, up to 8 MB</span>
             )}
           </div>
-          <div id="ai-image-hint" className="hint">PNG/JPG up to a few MB. Preview below; image will be visible to bidders.</div>
+          <div id="ai-image-hint" className="hint">Only a single image is required.</div>
         </div>
 
         {previewUrl ? (
@@ -184,19 +167,22 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
             <label className="field__label">Preview</label>
             <img
               src={previewUrl}
-              alt={title ? `Preview of ${title}` : 'Image preview'}
-              style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }}
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              alt="Image preview"
+              style={{ width: '100%', maxHeight: 240, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }}
             />
           </div>
         ) : null}
 
-        {imageFile && busy ? (
+        {uploadedUrl ? (
           <div className="field">
-            <label className="field__label">Upload</label>
-            <div className="progress" aria-live="polite" role="status" style={{ width: '100%', background: 'var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ width: `${uploadProgress}%`, height: 8, background: 'var(--primary)', transition: 'width 200ms' }} />
-            </div>
+            <label className="field__label">Uploaded URL</label>
+            <input
+              readOnly
+              className="field__input"
+              value={uploadedUrl}
+              onFocus={(e) => e.target.select()}
+            />
+            <div className="hint">Share or copy this URL to use the image elsewhere in the app.</div>
           </div>
         ) : null}
 
