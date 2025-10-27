@@ -1,7 +1,8 @@
 import { supabase } from '../lib/supabaseClient';
+import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
-// Resolve bucket name from env with default fallback (spaces are intentional)
-const BUCKET_NAME = process.env.REACT_APP_SUPABASE_BUCKET_NAME?.trim() || 'the auction images';
+// Use the centralized, exact bucket name constant
+const BUCKET_NAME = AUCTION_IMAGES_BUCKET;
 
 /**
  * Derive an extension string from a filename or MIME type.
