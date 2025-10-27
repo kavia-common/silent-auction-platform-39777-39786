@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
-// Use the centralized, exact bucket name constant
+// Use the centralized bucket id (slug)
 const BUCKET_NAME = AUCTION_IMAGES_BUCKET;
 
 /**
@@ -38,7 +38,7 @@ function buildPath({ eventId, itemId, ext }) {
 // PUBLIC_INTERFACE
 export async function verifyBucketExists() {
   /**
-   * Checks Supabase Storage for the configured bucket name and throws an Error if missing.
+   * Checks Supabase Storage for the configured bucket id (slug) and throws an Error if missing.
    * This prevents confusing 'bucket not found' errors and guides setup in the dashboard.
    */
   try {
@@ -53,7 +53,7 @@ export async function verifyBucketExists() {
     }
     const exists = (data || []).some((b) => b.name === BUCKET_NAME);
     if (!exists) {
-      const msg = `Supabase Storage bucket not found: "${BUCKET_NAME}". Create this bucket in the Supabase dashboard (Storage -> Create new bucket) and ensure its name matches exactly, including spaces.`;
+      const msg = `Bucket not found: ${BUCKET_NAME}. Verify the bucket id (slug) in Supabase Storage matches this value.`;
       // eslint-disable-next-line no-console
       console.error(msg);
       throw new Error(msg);

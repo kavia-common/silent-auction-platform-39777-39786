@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { debugListBucket } from '../lib/debugStorage';
+import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 // PUBLIC_INTERFACE
 export default function Home() {
@@ -15,7 +16,7 @@ export default function Home() {
     const debugEnabled = String(process.env.REACT_APP_DEBUG_STORAGE || '').toLowerCase() === 'true';
     if (!debugEnabled) return;
 
-    const bucket = 'the-auction-images';
+    const bucket = AUCTION_IMAGES_BUCKET;
     const prefix = undefined; // e.g., 'public/' or 'events/<id>/' if desired
 
     // eslint-disable-next-line no-console

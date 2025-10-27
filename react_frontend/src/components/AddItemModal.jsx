@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
 import { supabase } from '../lib/supabaseClient';
 import { verifyBucketExists, STORAGE_CONSTANTS } from '../services/storageService';
+import { AUCTION_IMAGES_LABEL } from '../constants/storage';
 
 /**
  * Refactored AddItemModal:
@@ -175,7 +176,10 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
             )}
           </div>
           <div id="ai-image-hint" className="hint">Only a single image is required.</div>
-          <div className="hint">Uploads use storage bucket: <strong>{BUCKET}</strong></div>
+          <div className="hint">
+            Uploads use storage bucket: <strong>{AUCTION_IMAGES_LABEL}</strong>
+            <span className="hint"> (id: {BUCKET})</span>
+          </div>
         </div>
 
         {previewUrl ? (
