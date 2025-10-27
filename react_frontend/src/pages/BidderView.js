@@ -307,12 +307,12 @@ export default function BidderView() {
           ) : (
             <div>
               {winners.map((w) => (
-                <div key={w.item_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div>
+                <div key={w.item_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+                  <div style={{ flex: 1 }}>
                     <strong>{w.title || 'Item'}</strong>
                     <div className="hint">Starting: {Number(w.starting_bid || 0).toLocaleString()}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ flex: 1, textAlign: 'right' }}>
                     <div>Winner: <strong>{w.bidder_name || '—'}</strong></div>
                     <div>Amount: <span className="badge badge--primary">{w.winning_amount != null ? Number(w.winning_amount).toLocaleString() : '—'}</span></div>
                   </div>
@@ -341,13 +341,30 @@ export default function BidderView() {
 
       <div className="grid grid--cards">
         {sortedItems.map((it) => (
-          <ItemCard
-            key={it.id}
-            item={it}
-            highBid={highBids[it.id] ?? null}
-            allowBid={!isClosed}
-            onBid={handleBid(it)}
-          />
+          <div key={it.id} className="card item-card">
+            <div className="card__header">
+              <h3 className="card__title">{it.title}</h3>
+            </div>
+            {it.item_image_url ? (
+              <img
+                src={it.item_image_url}
+                alt={it.title ? `${it.title} image` : 'Item image'}
+                style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            ) : null}
+            {it.description ? <p className="card__text">{it.description}</p> : null}
+            <div className="item-card__meta">
+              <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>
+              <span className="badge badge--primary">Current: {Number(highBids[it.id] ?? it.starting_bid ?? 0).toLocaleString()}</span>
+            </div>
+            <ItemCard
+              item={it}
+              highBid={highBids[it.id] ?? null}
+              allowBid={!isClosed}
+              onBid={handleBid(it)}
+            />
+          </div>
         ))}
       </div>
     </div>

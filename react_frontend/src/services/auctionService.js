@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { getOrCreateClientId } from '../lib/clientId';
+import { uploadPublicImageToBucket } from './storageService';
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
 
@@ -180,18 +181,57 @@ export async function getEventByName(name) {
   return { data, error };
 }
 
+/**
+ * Internal: update item with image URL if column exists, otherwise ignore.
+ */
+async function tryUpdateItemImageUrl(itemId, imageUrl) {
+  if (!itemId || !imageUrl) return { data: null, error: null };
+  // best-effort update; if column missing, swallow error
+  const { data, error } = await withShortRetry(() =>
+    supabase.from('items').update({ item_image_url: imageUrl }).eq('id', itemId).select('*').single()
+  );
+  if (error && /column .*item_image_url.* does not exist/i.test(error.message || '')) {
+    return { data: null, error: null };
+  }
+  return { data, error };
+}
+
 // PUBLIC_INTERFACE
-export async function addItem(eventId, item) {
-  /** Add new item to an event. */
+export async function addItem(eventId, item, imageFile) {
+  /**
+   * Add new item to an event.
+   * If imageFile is provided, uploads to storage and patches items.item_image_url.
+   */
   const payload = {
     event_id: eventId,
     title: item.title,
     description: item.description || '',
     starting_bid: Number(item.starting_bid || 0)
   };
-  const call = () => supabase.from('items').insert([payload]).select('*').single();
-  const { data, error } = await withShortRetry(call);
-  return { data, error };
+  const insertCall = () => supabase.from('items').insert([payload]).select('*').single();
+  const { data: created, error: createErr } = await withShortRetry(insertCall);
+  if (createErr) return { data: null, error: createErr };
+
+  // If no image, return immediately
+  if (!imageFile) return { data: created, error: null };
+
+  // Upload image and patch item_image_url
+  const { publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
+  if (uploadErr) {
+    // Keep the item, but surface error to caller
+    return { data: created, error: uploadErr };
+  }
+  const { data: updated, error: patchErr } = await tryUpdateItemImageUrl(created.id, publicUrl);
+  // If patch fails (e.g., column missing), still return created
+  return { data: updated || created, error: patchErr || null };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Convenience alias explicitly indicating image handling.
+ */
+export async function addItemWithImage(eventId, item, imageFile) {
+  return addItem(eventId, item, imageFile);
 }
 
 // PUBLIC_INTERFACE
@@ -578,6 +618,13 @@ export function subscribeToBidsForEvent(eventId, onChange) {
   return () => { supabase.removeChannel(channel); };
 }
 
+export function getItemDisplayFields(item) {
+  /** Returns normalized fields for displaying an item including image URL if present. */
+  const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
+  const imageUrl = item?.item_image_url || '';
+  return { title, imageUrl };
+}
+
 export default {
   createEvent,
   sendHostMagicLink,
@@ -586,6 +633,7 @@ export default {
   validateEventCode,
   storeBidderContext,
   addItem,
+  addItemWithImage,
   listItems,
   deleteItem,
   placeBid,
@@ -602,5 +650,6 @@ export default {
   getHighestBidPerItem,
   getBidCountsPerItem,
   getBidsTimeSeries,
-  subscribeToBidsForEvent
+  subscribeToBidsForEvent,
+  getItemDisplayFields
 };

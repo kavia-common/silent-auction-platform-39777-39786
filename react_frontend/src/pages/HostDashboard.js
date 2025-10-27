@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import ItemCard from '../components/ItemCard';
 import SimpleChart from '../components/SimpleChart';
+import AddItemModal from '../components/AddItemModal.jsx';
 import {
   addItem,
   deleteItem,
@@ -30,6 +31,7 @@ export default function HostDashboard() {
   const [highBids, setHighBids] = useState({});
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ title: '', description: '', starting_bid: 0 });
+  const [addOpen, setAddOpen] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [eventRow, setEventRow] = useState(null);
@@ -535,6 +537,14 @@ export default function HostDashboard() {
                       <button className="btn btn--text btn--danger" onClick={() => handleDeleteItem(it.id)}>Delete</button>
                     </div>
                   </div>
+                  {it.item_image_url ? (
+                    <img
+                      src={it.item_image_url}
+                      alt={it.title ? `${it.title} image` : 'Item image'}
+                      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : null}
                   {it.description ? <p className="card__text">{it.description}</p> : null}
                   <div className="item-card__meta">
                     <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>
@@ -548,6 +558,12 @@ export default function HostDashboard() {
           </div>
         </div>
       </div>
+      <AddItemModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        eventId={eventId}
+        onAdded={() => { setAddOpen(false); loadItems(); }}
+      />
     </div>
   );
 }
