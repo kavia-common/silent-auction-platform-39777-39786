@@ -111,18 +111,20 @@ export async function verifyBucketExists() {
   const probe = await probeBucketAccess();
   if (!probe.ok) {
     if (probe.kind === 'unauthorized' || probe.kind === 'forbidden') {
+      const statusTxt = probe.error?.status ? `status ${probe.error.status}` : 'permission error';
       throw new Error(
-        `Bucket "${AUCTION_IMAGES_BUCKET}" exists but access is forbidden for project "${projectRef}". Update Storage policies or mark the bucket public if required.`
+        `Bucket "${AUCTION_IMAGES_BUCKET}" exists but access is denied for project "${projectRef}" (${statusTxt}). Review Storage policies (RLS) and bucket public setting.`
       );
     }
     if (probe.kind === 'not_found') {
       // Rare: race; surface as not found
       throw new Error(
-        `Bucket "${AUCTION_IMAGES_BUCKET}" reported by listBuckets but could not be listed. It may have been removed or renamed.`
+        `Bucket "${AUCTION_IMAGES_BUCKET}" reported by listBuckets but could not be listed (404). It may have been removed or renamed.`
       );
     }
+    const statusTxt = typeof probe.error?.status !== 'undefined' ? `status ${probe.error.status}` : 'unknown status';
     throw new Error(
-      `Bucket "${AUCTION_IMAGES_BUCKET}" probe failed: ${probe.error?.message || 'Unknown error'}`
+      `Bucket "${AUCTION_IMAGES_BUCKET}" probe failed (${statusTxt}): ${probe.error?.message || 'Unknown error'}`
     );
   }
   return true;
@@ -152,15 +154,20 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
 
     if (uploadError) {
       const projectRef = getProjectRef();
-      const msg = (uploadError.message || '').toLowerCase();
+      const msgLower = (uploadError.message || '').toLowerCase();
+      const statusTxt = typeof uploadError.status !== 'undefined' ? `status ${uploadError.status}` : 'unknown status';
       let hint = '';
-      if (msg.includes('not found')) {
-        hint = `Bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify the slug in Supabase dashboard.`;
-      } else if (msg.includes('unauthorized') || msg.includes('forbidden')) {
-        hint = `Access denied. Check Storage policies and whether the bucket is public if you expect anonymous uploads.`;
+      if (uploadError.status === 404 || msgLower.includes('not found')) {
+        hint = `Bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify the exact bucket slug in Supabase (Storage > Buckets) and ensure the client points to project "${projectRef}".`;
+      } else if (uploadError.status === 401 || msgLower.includes('unauthorized') || msgLower.includes('401')) {
+        hint = `Unauthorized (401). Ensure REACT_APP_SUPABASE_KEY is the anon public key for project "${projectRef}" and review Storage policies.`;
+      } else if (uploadError.status === 403 || msgLower.includes('forbidden') || msgLower.includes('permission') || msgLower.includes('403')) {
+        hint = `Forbidden (403). Update Storage policies or mark the bucket public if you expect anonymous uploads.`;
+      } else {
+        hint = `Check Supabase Storage settings and network; see console for full error.`;
       }
       const enhanced = new Error(
-        `Upload failed to bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${uploadError.message || ''} ${hint}`.trim()
+        `Upload failed to bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}" (${statusTxt}). ${uploadError.message || ''} ${hint}`.trim()
       );
       return { path: null, publicUrl: null, error: enhanced };
     }
