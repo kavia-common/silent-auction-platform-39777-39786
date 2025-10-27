@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
-// Use the centralized bucket id (slug)
+// Use the centralized bucket id (slug) for all API calls. Do not change this without updating constants.
 const BUCKET_NAME = AUCTION_IMAGES_BUCKET;
 
 /**
@@ -52,7 +52,7 @@ function getProjectRef() {
 export async function verifyBucketExists() {
   /**
    * Checks Supabase Storage for the configured bucket id (slug) and throws an Error if missing.
-   * This prevents confusing 'bucket not found' errors and guides setup in the dashboard.
+   * This prevents confusing 'Bucket not found' errors and guides setup in the dashboard.
    */
   const projectRef = getProjectRef();
   try {
@@ -66,7 +66,7 @@ export async function verifyBucketExists() {
     }
     const exists = (data || []).some((b) => b.name === BUCKET_NAME);
     if (!exists) {
-      const msg = `Bucket not found. Using slug "${BUCKET_NAME}" on project "${projectRef}". Verify the bucket id matches exactly in Supabase Storage.`;
+      const msg = `Bucket not found. Using slug "${BUCKET_NAME}" on project "${projectRef}". Confirm the bucket ID in your Supabase dashboard (Storage > Buckets).`;
       // eslint-disable-next-line no-console
       console.error('[storage]', msg);
       throw new Error(msg);
@@ -102,7 +102,7 @@ export async function uploadPublicImageToBucket(eventId, itemId, file) {
     if (uploadError) {
       const projectRef = getProjectRef();
       const enhanced = new Error(
-        `Upload failed for bucket "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
+        `Upload failed to bucket "${BUCKET_NAME}" on project "${projectRef}". ${uploadError.message || ''}`.trim()
       );
       return { path: null, publicUrl: null, error: enhanced };
     }

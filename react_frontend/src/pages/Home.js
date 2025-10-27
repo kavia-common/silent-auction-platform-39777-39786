@@ -21,7 +21,7 @@ export default function Home() {
     const prefix = undefined; // e.g., 'public/' or 'events/<id>/' if desired
 
     // eslint-disable-next-line no-console
-    console.log('[DEBUG_STORAGE] Enabled. REACT_APP_SUPABASE_URL:', process.env.REACT_APP_SUPABASE_URL || '(not set)');
+    console.log('[DEBUG_STORAGE] Enabled. Using bucket slug:', bucket, 'Project URL host:', (() => { try { return new URL(process.env.REACT_APP_SUPABASE_URL || '').host; } catch { return '(invalid or not set)'; }})());
     // First, validate the bucket by attempting a list on root and logging definitive result.
     (async () => {
       try {

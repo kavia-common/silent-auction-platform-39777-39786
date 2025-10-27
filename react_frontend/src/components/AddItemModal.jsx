@@ -113,7 +113,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
         .upload(path, file, { cacheControl: '3600', upsert: true });
 
       if (uploadErr) {
-        setError(uploadErr.message || 'Failed to upload image.');
+        setError(uploadErr.message || `Failed to upload image to bucket ${BUCKET}. Check Supabase Storage configuration.`);
         return;
       }
 

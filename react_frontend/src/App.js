@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import './App.css';
 
 import Navbar from './components/Navbar';
@@ -11,10 +12,28 @@ import HostDashboard from './pages/HostDashboard';
 import BidderView from './pages/BidderView';
 import MagicLinkCallback from './pages/MagicLinkCallback';
 import MinimalImageUploadPage from './pages/MinimalImageUploadPage';
+import { validateBucket } from './lib/validateBucket';
+import { AUCTION_IMAGES_BUCKET } from './constants/storage';
 
 // PUBLIC_INTERFACE
 export default function App() {
-  /** Router container for the Silent Auction app. */
+  /** Router container for the Silent Auction app. Also triggers optional storage validation on app load. */
+  useEffect(() => {
+    const debugEnabled = String(process.env.REACT_APP_DEBUG_STORAGE || '').toLowerCase() === 'true';
+    if (!debugEnabled) return;
+
+    (async () => {
+      try {
+        await validateBucket(AUCTION_IMAGES_BUCKET);
+        // eslint-disable-next-line no-console
+        console.log('[DEBUG_STORAGE] App boot storage validation passed for', AUCTION_IMAGES_BUCKET);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[DEBUG_STORAGE] App boot storage validation failed:', e?.message || e);
+      }
+    })();
+  }, []);
+
   return (
     <div className="app-root">
       <Navbar />
