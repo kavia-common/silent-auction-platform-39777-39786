@@ -563,7 +563,22 @@ export default function HostDashboard() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         eventId={eventId}
-        onAdded={() => { setAddOpen(false); loadItems(); }}
+        onAdded={async ({ image_url }) => {
+          // Create a minimal item using the standard form fields plus image_url
+          const { error: addErr } = await addItem(eventId, {
+            title: form.title.trim() || 'Untitled Item',
+            description: form.description.trim() || '',
+            starting_bid: Number(form.starting_bid || 0),
+            image_url
+          });
+          if (!addErr) {
+            setAddOpen(false);
+            setForm({ title: '', description: '', starting_bid: 0 });
+            loadItems();
+          } else {
+            setError(addErr.message || 'Failed to add item');
+          }
+        }}
       />
       <ImageUploadModal
         open={imageModalOpen}

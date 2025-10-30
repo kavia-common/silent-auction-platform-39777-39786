@@ -10,7 +10,8 @@ import {
   subscribeToItems,
   subscribeToEvent,
   getNormalizedEventStatus,
-  getWinnersForEvent
+  getWinnersForEvent,
+  getItemDisplayFields
 } from '../services/auctionService';
 import { getOrCreateClientId } from '../lib/clientId';
 
@@ -345,14 +346,17 @@ export default function BidderView() {
             <div className="card__header">
               <h3 className="card__title">{it.title}</h3>
             </div>
-            {it.item_image_url ? (
-              <img
-                src={it.item_image_url}
-                alt={it.title ? `${it.title} image` : 'Item image'}
-                style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
-            ) : null}
+            {(() => {
+              const disp = getItemDisplayFields(it);
+              return disp.imageUrl ? (
+                <img
+                  src={disp.imageUrl}
+                  alt={disp.title ? `${disp.title} image` : 'Item image'}
+                  style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              ) : null;
+            })()}
             {it.description ? <p className="card__text">{it.description}</p> : null}
             <div className="item-card__meta">
               <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>

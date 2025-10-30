@@ -200,33 +200,40 @@ async function tryUpdateItemImageUrl(itemId, imageUrl) {
 export async function addItem(eventId, item, imageFile) {
   /**
    * Add new item to an event.
-   * Image is required; uploads to storage and patches items.item_image_url.
+   * If imageFile provided, upload to storage and persist URL in items.item_image_url (or ignore if column missing).
+   * If caller provided item.image_url or item.item_image_url, attempt to persist that value directly as well.
    */
-  if (!imageFile) {
-    return { data: null, error: new Error('Please select an image to continue') };
-  }
-
   const payload = {
     event_id: eventId,
     title: item.title,
     description: item.description || '',
-    starting_bid: Number(item.starting_bid || 0)
+    starting_bid: Number(item.starting_bid || 0),
   };
+
+  // Create item first (so we have id for subsequent upload)
   const insertCall = () => supabase.from('items').insert([payload]).select('*').single();
   const { data: created, error: createErr } = await withShortRetry(insertCall);
   if (createErr) return { data: null, error: createErr };
 
-  // Upload image and patch item_image_url
-  const { publicUrl, signedUrl, path, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
-  if (uploadErr) {
-    // Keep the item, but surface error to caller
-    return { data: created, error: uploadErr };
+  // If caller passed an image url explicitly, try to persist it immediately.
+  const initialUrl = item?.image_url || item?.item_image_url || null;
+  if (initialUrl) {
+    await tryUpdateItemImageUrl(created.id, initialUrl);
   }
-  // Prefer permanent public URL if policy/bucket allows; else use signed URL temporarily
-  const imageUrl = publicUrl || signedUrl || '';
-  const { data: updated, error: patchErr } = await tryUpdateItemImageUrl(created.id, imageUrl);
-  // If patch fails (e.g., column missing), still return created
-  return { data: updated || created, error: patchErr || null };
+
+  // If a file is provided, upload and persist URL
+  if (imageFile) {
+    const { publicUrl, signedUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
+    if (uploadErr) {
+      // Keep the item, but surface error to caller
+      return { data: created, error: uploadErr };
+    }
+    const imageUrl = publicUrl || signedUrl || '';
+    const { data: updated, error: patchErr } = await tryUpdateItemImageUrl(created.id, imageUrl);
+    return { data: updated || created, error: patchErr || null };
+  }
+
+  return { data: created, error: null };
 }
 
 /**
@@ -255,11 +262,12 @@ export async function updateItemImage(eventId, itemId, file) {
 
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
-  /** List items for an event. */
+  /** List items for an event, selecting common columns including optional image URLs. */
   const call = () =>
     supabase
       .from('items')
-      .select('*')
+      // Select explicit columns so we can rely on optional image fields when present
+      .select('id, event_id, title, name, description, starting_bid, created_at, item_image_url, image_url')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
@@ -640,7 +648,7 @@ export function subscribeToBidsForEvent(eventId, onChange) {
 export function getItemDisplayFields(item) {
   /** Returns normalized fields for displaying an item including image URL if present. */
   const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
-  const imageUrl = item?.item_image_url || '';
+  const imageUrl = item?.item_image_url || item?.image_url || '';
   return { title, imageUrl };
 }
 

@@ -57,14 +57,17 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
           )}
         </div>
       </div>
-      {item?.item_image_url ? (
-        <img
-          src={item.item_image_url}
-          alt={displayTitle ? `${displayTitle} image` : 'Item image'}
-          style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-        />
-      ) : null}
+      {(() => {
+        const url = item?.item_image_url || item?.image_url || '';
+        return url ? (
+          <img
+            src={url}
+            alt={displayTitle ? `${displayTitle} image` : 'Item image'}
+            style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
+        ) : null;
+      })()}
       {item?.description ? <p className="card__text">{item.description}</p> : null}
       <div className="item-card__meta">
         <span className="badge">Starting: {Number(item?.starting_bid || 0).toLocaleString()}</span>

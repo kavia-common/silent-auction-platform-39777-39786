@@ -11,7 +11,7 @@ import { AUCTION_IMAGES_LABEL, AUCTION_IMAGES_BUCKET } from '../constants/storag
  * - Presents public URL on success for immediate UI display
  */
 // PUBLIC_INTERFACE
-export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
+export default function AddItemModal({ open, onClose, eventId, onUploaded, onAdded }) {
   /** Simple image upload dialog for a single image file. */
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -104,6 +104,8 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
       }
       setPublicUrl(pUrl || '');
       if (typeof onUploaded === 'function') onUploaded({ path, publicUrl: pUrl || '' });
+      // Notify parent to create an item using this image URL if it wants to
+      if (typeof onAdded === 'function') onAdded({ image_url: pUrl || '' });
     } catch (ex) {
       setError(ex?.message || 'Unexpected error during upload.');
     } finally {
