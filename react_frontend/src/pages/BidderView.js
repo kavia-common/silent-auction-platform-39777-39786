@@ -16,7 +16,9 @@ import {
 import { getOrCreateClientId } from '../lib/clientId';
 import { getDisplayUrlForPath } from '../services/storageService';
 
-// Small helper component to resolve image URL at runtime without exposing raw URL text
+// Small helper component to resolve image URL at runtime for bidders.
+// Uses items.image_path consistently and does not rely on any host state.
+// Adds safe console logs and a robust placeholder for failures.
 function ItemImageRenderer({ item }) {
   const disp = getItemDisplayFields(item);
   const [src, setSrc] = useState('');
@@ -26,15 +28,16 @@ function ItemImageRenderer({ item }) {
     let cancelled = false;
     setFailed(false);
     async function resolve() {
-      if (!disp.imagePath) {
+      const path = disp?.imagePath || item?.image_path || '';
+      if (!path) {
         if (!cancelled) setSrc('');
         return;
       }
       try {
-        const { url, error } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
+        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
         if (error || !url) {
           // eslint-disable-next-line no-console
-          console.warn('[bidder] Image URL resolution failed', { itemId: item?.id, image_path: disp.imagePath, message: error?.message });
+          console.warn('[bidder] Image URL resolution failed', { itemId: item?.id, image_path: path, message: error?.message });
           if (!cancelled) {
             setSrc('');
             setFailed(true);
@@ -44,7 +47,7 @@ function ItemImageRenderer({ item }) {
         }
       } catch (e) {
         // eslint-disable-next-line no-console
-        console.warn('[bidder] Exception resolving image URL', { itemId: item?.id, image_path: disp.imagePath, message: e?.message });
+        console.warn('[bidder] Exception resolving image URL', { itemId: item?.id, image_path: path, message: e?.message });
         if (!cancelled) {
           setSrc('');
           setFailed(true);
@@ -54,7 +57,7 @@ function ItemImageRenderer({ item }) {
     resolve();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disp.imagePath, item?.id]);
+  }, [disp?.imagePath, item?.image_path, item?.id]);
 
   if (src) {
     return (
@@ -65,7 +68,7 @@ function ItemImageRenderer({ item }) {
         onError={(e) => { 
           e.currentTarget.style.display = 'none'; 
           // eslint-disable-next-line no-console
-          console.warn('[bidder] <img> failed to load', { itemId: item?.id, image_path: disp.imagePath });
+          console.warn('[bidder] <img> failed to load', { itemId: item?.id, image_path: disp?.imagePath || item?.image_path });
         }}
       />
     );

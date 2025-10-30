@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { getDisplayUrlForPath } from '../services/storageService';
 
 function ItemImage({ item, displayTitle }) {
+  // Resolves items.image_path to a displayable URL using storageService.
+  // Does not depend on auth context; bucket is public-read with signed URL fallback.
   const [src, setSrc] = useState('');
   const [failed, setFailed] = useState(false);
 

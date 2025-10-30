@@ -266,12 +266,11 @@ export async function updateItemImage(eventId, itemId, file) {
 
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
-  /** List items for an event, selecting common columns including optional image URLs. */
+  /** List items for an event; image rendering relies on items.image_path exclusively. */
   const call = () =>
     supabase
       .from('items')
-      // Select explicit columns so we can rely on optional image fields when present
-      // Note: schema defines 'title' (not 'name'); include legacy fields only if present
+      // Explicit columns; image rendering uses only image_path to avoid host-only state or legacy URL fields.
       .select('id, event_id, title, description, starting_bid, created_at, image_path')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
