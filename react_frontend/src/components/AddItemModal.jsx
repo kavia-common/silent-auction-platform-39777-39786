@@ -1,21 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
-import { supabase } from '../lib/supabaseClient';
-import { verifyBucketExists } from '../services/storageService';
+import { verifyBucketExists, uploadItemImage, getSignedImageUrl } from '../services/storageService';
 import { AUCTION_IMAGES_LABEL, AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 /**
  * Refactored AddItemModal:
- * - Simplified to ONLY show a single image upload.
- * - No title/description/starting bid; does not persist any item data.
- * - Validates image type and size, uploads to Supabase Storage, and displays the public URL + preview.
+ * - Enforces private, user-id-prefixed paths and requires authenticated host session.
+ * - Displays a signed URL for preview; avoids public URLs when using private buckets.
  */
 // PUBLIC_INTERFACE
 export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   /** Simple image upload dialog for a single image file. */
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
-  const [uploadedUrl, setUploadedUrl] = useState('');
+  const [signedUrl, setSignedUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
@@ -29,7 +27,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
     if (!open) {
       setFile(null);
       setPreviewUrl('');
-      setUploadedUrl('');
+      setSignedUrl('');
       setError('');
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -40,7 +38,6 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
       try {
         await verifyBucketExists();
       } catch (err) {
-        // Surface the message to both console and UI
         // eslint-disable-next-line no-console
         console.error(err);
         setError(err?.message || 'Storage bucket verification failed.');
@@ -77,17 +74,10 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
     setPreviewUrl(f ? URL.createObjectURL(f) : '');
   };
 
-  const buildPath = (f) => {
-    const ext = (f?.name?.split('.')?.pop() || 'jpg').replace(/[^a-z0-9]/gi, '') || 'jpg';
-    const safeEvent = String(eventId || '').replace(/[^a-zA-Z0-9-_]/g, '');
-    const stamp = Date.now();
-    return `${safeEvent}/${stamp}.${ext}`;
-  };
-
   const onUpload = async (e) => {
     e.preventDefault();
     setError('');
-    setUploadedUrl('');
+    setSignedUrl('');
     if (!eventId) {
       setError('Missing event context.');
       return;
@@ -104,28 +94,22 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
 
     setBusy(true);
     try {
-      // Ensure bucket exists again right before upload, in case user changed env or project state
-      await verifyBucketExists();
-
-      const path = buildPath(file);
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, { cacheControl: '3600', upsert: true });
-
+      // Upload using user-id-prefixed path; requires authenticated session
+      const { path, error: uploadErr } = await uploadItemImage(file);
       if (uploadErr) {
-        setError(uploadErr.message || `Failed to upload image to bucket ${BUCKET}. Check Supabase Storage configuration.`);
+        setError(uploadErr.message || 'Failed to upload image. Ensure you are signed in via magic link.');
         return;
       }
 
-      const { data: pub, error: pubErr } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (pubErr) {
-        setError(pubErr.message || 'Failed to get public URL.');
+      // Provide a signed URL for immediate preview
+      const { signedUrl: url, error: signErr } = await getSignedImageUrl(path, 3600);
+      if (signErr) {
+        setError(signErr.message || 'Image uploaded but failed to create signed URL.');
         return;
       }
 
-      const publicUrl = pub?.publicUrl || '';
-      setUploadedUrl(publicUrl);
-      if (typeof onUploaded === 'function') onUploaded(publicUrl);
+      setSignedUrl(url || '');
+      if (typeof onUploaded === 'function') onUploaded({ path, signedUrl: url || '' });
     } catch (ex) {
       setError(ex?.message || 'Unexpected error during upload.');
     } finally {
@@ -180,6 +164,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
             Uploads use storage bucket: <strong>{AUCTION_IMAGES_LABEL}</strong>
             <span className="hint"> (id: {BUCKET})</span>
           </div>
+          <div className="hint">Note: You must be authenticated via your magic link to upload.</div>
         </div>
 
         {previewUrl ? (
@@ -193,16 +178,16 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
           </div>
         ) : null}
 
-        {uploadedUrl ? (
+        {signedUrl ? (
           <div className="field">
-            <label className="field__label">Uploaded URL</label>
+            <label className="field__label">Signed URL (1 hour)</label>
             <input
               readOnly
               className="field__input"
-              value={uploadedUrl}
+              value={signedUrl}
               onFocus={(e) => e.target.select()}
             />
-            <div className="hint">Share or copy this URL to use the image elsewhere in the app.</div>
+            <div className="hint">Use this URL temporarily in the app; it will expire. Store the object path for long-term persistence.</div>
           </div>
         ) : null}
 

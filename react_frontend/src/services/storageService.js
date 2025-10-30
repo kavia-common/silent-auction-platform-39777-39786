@@ -1,6 +1,13 @@
 import { supabase } from '../lib/supabaseClient';
 import { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
+// Lightweight console-safe logger
+const log = {
+  info: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.info('[storage]', ...args); } catch {} } },
+  warn: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.warn('[storage]', ...args); } catch {} } },
+  error: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.error('[storage]', ...args); } catch {} } },
+};
+
 /**
  * Derive an extension string from a filename or MIME type.
  */
@@ -19,16 +26,6 @@ function deriveExtension(file) {
 }
 
 /**
- * Build a storage path: ${eventId}/${itemId}-${timestamp}.${ext}
- */
-function buildPath({ eventId, itemId, ext }) {
-  const safeEvent = String(eventId || '').replace(/[^a-zA-Z0-9-_]/g, '');
-  const safeItem = String(itemId || '').replace(/[^a-zA-Z0-9-_]/g, '');
-  const stamp = Date.now();
-  return `${safeEvent}/${safeItem}-${stamp}.${ext}`;
-}
-
-/**
  * Extract project ref for diagnostics.
  */
 function getProjectRef() {
@@ -38,33 +35,6 @@ function getProjectRef() {
     return host.split('.')[0] || '';
   } catch {
     return '';
-  }
-}
-
-/**
- * Attempt to read the bucket metadata and create it if it does not exist.
- * This is guarded to not break anon contexts: createBucket requires service role; in anon, it will return 403.
- */
-async function ensureBucketExistsOrCreateIfPossible() {
-  // Try to fetch the bucket metadata
-  try {
-    const { data: bucketData, error: getErr } = await supabase.storage.getBucket(AUCTION_IMAGES_BUCKET);
-    if (bucketData && !getErr) {
-      return { exists: true, created: false, error: null };
-    }
-    // If explicitly not found, try create (may fail under anon, which we tolerate)
-    if (getErr && (getErr.status === 404 || /not found/i.test(getErr.message || ''))) {
-      const { data: created, error: createErr } = await supabase.storage.createBucket(AUCTION_IMAGES_BUCKET, { public: true });
-      if (created && !createErr) {
-        return { exists: true, created: true, error: null };
-      }
-      // Creation not allowed or failed; surface original not-found while preserving error
-      return { exists: false, created: false, error: createErr || getErr };
-    }
-    // Other errors (403/401/etc.) — just return and let caller decide
-    return { exists: Boolean(bucketData), created: false, error: getErr || null };
-  } catch (e) {
-    return { exists: false, created: false, error: e };
   }
 }
 
@@ -112,123 +82,151 @@ export async function checkStorageAccess() {
   const statusTxt = typeof probe.error?.status !== 'undefined' ? `status ${probe.error.status}` : 'unknown status';
   let message = `Unable to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}" (${statusTxt}). ${probe.error?.message || 'Unknown error'}`;
   if (probe.kind === 'not_found') {
-    message = `Bucket "${AUCTION_IMAGES_BUCKET}" not found on project "${projectRef}". Create it in Supabase (Storage > Create bucket) and mark it public or update policies.`;
+    message = `Bucket "${AUCTION_IMAGES_BUCKET}" not found on project "${projectRef}". Create it in Supabase (Storage > Create bucket).`;
   } else if (probe.kind === 'unauthorized') {
     message = `Unauthorized (401) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Ensure REACT_APP_SUPABASE_KEY is the anon public key and review Storage policies.`;
   } else if (probe.kind === 'forbidden') {
-    message = `Forbidden (403) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Update Storage policies or set the bucket to public if anonymous access is intended.`;
+    message = `Forbidden (403) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Update Storage policies and ensure you use user-id-prefixed paths.`;
   }
   return { ok: false, kind: probe.kind, message, error: probe.error || null };
 }
 
 /**
- * Verify that the configured bucket exists in Supabase Storage.
- * Try to create it if possible (will not succeed under anon).
- * Throws a clear, actionable error if not found or not accessible.
+ * PUBLIC_INTERFACE
+ * Verify that the configured bucket exists or is accessible enough for client operations.
+ * For anon key, we don't attempt to create the bucket (requires service role).
  */
 // PUBLIC_INTERFACE
 export async function verifyBucketExists() {
-  const projectRef = getProjectRef();
-
-  // First, attempt a metadata read and best-effort creation
-  const ensured = await ensureBucketExistsOrCreateIfPossible();
-  if (!ensured.exists) {
-    // Follow up with a probe for clearer classification
-    const probe = await probeBucketAccess();
-    const statusTxt = typeof probe.error?.status !== 'undefined' ? `status ${probe.error.status}` : 'unknown status';
-    if (probe.kind === 'not_found') {
-      throw new Error(`Bucket not found for slug "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Create the bucket in Supabase (Storage > Buckets).`);
-    }
-    if (probe.kind === 'unauthorized') {
-      throw new Error(`Unauthorized to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Check that your REACT_APP_SUPABASE_KEY is the anon key and review Storage policies.`);
-    }
-    if (probe.kind === 'forbidden') {
-      throw new Error(`Forbidden to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Update Storage policies or mark the bucket public.`);
-    }
-    throw new Error(`Unable to verify bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}" (${statusTxt}). ${ensured.error?.message || probe.error?.message || 'Unknown error'}`);
-  }
-
-  // Finally, probe listing to ensure access with current role
+  // We rely on list probe as our capability check for anon clients
   const probe = await probeBucketAccess();
   if (!probe.ok) {
-    if (probe.kind === 'unauthorized') {
-      throw new Error(`Bucket "${AUCTION_IMAGES_BUCKET}" exists but is unauthorized on project "${projectRef}". Review policies / anon key.`);
-    }
-    if (probe.kind === 'forbidden') {
-      throw new Error(`Bucket "${AUCTION_IMAGES_BUCKET}" exists but is forbidden on project "${projectRef}". Update policies or set public: true.`);
-    }
-    if (probe.kind === 'not_found') {
-      throw new Error(`Bucket "${AUCTION_IMAGES_BUCKET}" was reported but not listable (404). It may have been removed or renamed.`);
-    }
+    const projectRef = getProjectRef();
     const statusTxt = typeof probe.error?.status !== 'undefined' ? `status ${probe.error.status}` : 'unknown status';
-    throw new Error(`Bucket "${AUCTION_IMAGES_BUCKET}" probe failed (${statusTxt}): ${probe.error?.message || 'Unknown error'}`);
+    throw new Error(`Storage bucket "${AUCTION_IMAGES_BUCKET}" not accessible on project "${projectRef}" (${statusTxt}). ${probe.error?.message || 'Check Storage configuration and policies.'}`);
   }
-
   return true;
 }
 
 /**
- * Upload a file to the public bucket and return { path, publicUrl, error }.
- * File is expected to be a browser File or Blob with an optional name/type.
+ * PUBLIC_INTERFACE
+ * Upload an item image enforcing RLS path prefix `${user.id}/${uuid}.${ext}`.
+ * Returns { path, error } and intentionally does NOT expose a public URL to avoid public path usage.
  */
 // PUBLIC_INTERFACE
-export async function uploadPublicImageToBucket(eventId, itemId, file) {
-  /** Uploads an image to the configured public bucket and returns its public URL. */
-  if (!file || !eventId || !itemId) {
-    return { path: null, publicUrl: null, error: new Error('Missing required parameters') };
+export async function uploadItemImage(file) {
+  /**
+   * Ensures there is an authenticated session (host via magic link),
+   * then uploads into bucket using a user-id-prefixed key to satisfy storage RLS:
+   *   <user_id>/<uuid>.<ext>
+   */
+  if (!file) return { path: null, error: new Error('No file provided') };
+
+  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+  if (sessionErr) {
+    log.warn('Failed to get session for upload:', sessionErr);
   }
+  const session = sessionData?.session || null;
+  const user = session?.user || null;
+
+  if (!user?.id) {
+    const hint = 'Please sign in via your magic link to upload images. Once authenticated, try again.';
+    const friendly = new Error(`No authenticated session. ${hint}`);
+    // For developers: extra console context
+    log.error('Upload blocked: no session. Ensure magic link sign-in completed before uploading.');
+    return { path: null, error: friendly };
+  }
+
+  // Ensure bucket reachable
   try {
-    // Ensure bucket exists and is accessible first for clearer error feedback
     await verifyBucketExists();
-
-    const ext = deriveExtension(file);
-    const path = buildPath({ eventId, itemId, ext });
-
-    // Perform upload
-    const { error: uploadError } = await supabase.storage
-      .from(AUCTION_IMAGES_BUCKET)
-      .upload(path, file, { cacheControl: '3600', upsert: true });
-
-    if (uploadError) {
-      const projectRef = getProjectRef();
-      const msgLower = (uploadError.message || '').toLowerCase();
-      const statusTxt = typeof uploadError.status !== 'undefined' ? `status ${uploadError.status}` : 'unknown status';
-      let hint = '';
-      if (uploadError.status === 404 || msgLower.includes('not found')) {
-        hint = `Bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify the exact bucket slug (Storage > Buckets) and ensure client points to project "${projectRef}".`;
-      } else if (uploadError.status === 401 || msgLower.includes('unauthorized') || msgLower.includes('401')) {
-        hint = `Unauthorized (401). Ensure REACT_APP_SUPABASE_KEY is the anon public key and review Storage policies.`;
-      } else if (uploadError.status === 403 || msgLower.includes('forbidden') || msgLower.includes('permission') || msgLower.includes('403')) {
-        hint = `Forbidden (403). Update Storage policies or mark the bucket public if you expect anonymous uploads.`;
-      } else {
-        hint = `Check Supabase Storage settings and network; see console for full error.`;
-      }
-      const enhanced = new Error(
-        `Upload failed to bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}" (${statusTxt}). ${uploadError.message || ''} ${hint}`.trim()
-      );
-      return { path: null, publicUrl: null, error: enhanced };
-    }
-
-    const { data: pub, error: pubErr } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
-    if (pubErr) {
-      const projectRef = getProjectRef();
-      const enhanced = new Error(
-        `Failed to retrieve public URL from bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". ${pubErr.message || ''}`.trim()
-      );
-      return { path, publicUrl: null, error: enhanced };
-    }
-
-    return { path, publicUrl: pub?.publicUrl || null, error: null };
   } catch (e) {
-    return { path: null, publicUrl: null, error: e };
+    return { path: null, error: e };
   }
+
+  // Build user-id-prefixed path
+  const ext = deriveExtension(file);
+  // Simple uuid v4-ish without external deps
+  const uuid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
+  const path = `${user.id}/${uuid}.${ext}`;
+
+  // Upload with upsert=false to avoid accidental overwrite
+  const { error: uploadErr } = await supabase.storage
+    .from(AUCTION_IMAGES_BUCKET)
+    .upload(path, file, { cacheControl: '3600', upsert: false });
+
+  if (uploadErr) {
+    const msg = (uploadErr.message || '').toLowerCase();
+    if (uploadErr.status === 403 || msg.includes('forbidden') || msg.includes('permission')) {
+      log.error('RLS/permission error during upload. Likely path not prefixed with auth.uid() or wrong user. Details:', uploadErr);
+      return { path: null, error: new Error('Upload failed due to storage policies. Ensure you are signed in and the upload path matches your user ID.') };
+    }
+    if (uploadErr.status === 401 || msg.includes('unauthorized')) {
+      log.error('Unauthorized upload attempt. Session may have expired.', uploadErr);
+      return { path: null, error: new Error('Unauthorized to upload. Please re-authenticate via magic link.') };
+    }
+    if (uploadErr.status === 404 || msg.includes('not found')) {
+      log.error('Bucket not found when uploading to', AUCTION_IMAGES_BUCKET, uploadErr);
+      return { path: null, error: new Error(`Storage bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify your Supabase Storage setup.`) };
+    }
+    log.error('Unexpected upload error:', uploadErr);
+    return { path: null, error: new Error(uploadErr.message || 'Upload failed') };
+  }
+
+  return { path, error: null };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Get a signed URL for a private object path.
+ */
+// PUBLIC_INTERFACE
+export async function getSignedImageUrl(path, expiresIn = 3600) {
+  /**
+   * Returns { signedUrl, error } for the given storage object path within the bucket.
+   * Requires bucket policies to allow createSignedUrl for the current role.
+   */
+  if (!path) return { signedUrl: null, error: new Error('Path is required') };
+  const { data, error } = await supabase.storage
+    .from(AUCTION_IMAGES_BUCKET)
+    .createSignedUrl(path, expiresIn);
+  if (error) {
+    log.error('Failed to create signed URL:', error);
+    const msg = (error.message || '').toLowerCase();
+    if (error.status === 403 || msg.includes('forbidden') || msg.includes('permission')) {
+      return { signedUrl: null, error: new Error('Cannot create signed URL due to storage policies.') };
+    }
+    return { signedUrl: null, error: new Error(error.message || 'Failed to create signed URL') };
+  }
+  return { signedUrl: data?.signedUrl || null, error: null };
+}
+
+// Backward-compatible export name (previous code expects this):
+// PUBLIC_INTERFACE
+export async function uploadPublicImageToBucket(eventId, itemId, file) {
+  /**
+   * Legacy wrapper that now enforces private, user-id-prefixed storage paths and returns a signed URL.
+   * Returns { path, publicUrl: null, signedUrl, error }.
+   */
+  const { path, error } = await uploadItemImage(file);
+  if (error) return { path: null, publicUrl: null, signedUrl: null, error };
+  // Attempt to return a short-lived signed URL for immediate preview
+  const { signedUrl, error: signErr } = await getSignedImageUrl(path, 3600);
+  if (signErr) {
+    return { path, publicUrl: null, signedUrl: null, error: signErr };
+  }
+  return { path, publicUrl: null, signedUrl, error: null };
 }
 
 // PUBLIC_INTERFACE
 export { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 export default {
-  uploadPublicImageToBucket,
+  uploadItemImage,
+  getSignedImageUrl,
+  uploadPublicImageToBucket, // legacy alias
   verifyBucketExists,
   checkStorageAccess,
 };

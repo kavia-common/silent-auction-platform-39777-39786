@@ -216,12 +216,14 @@ export async function addItem(eventId, item, imageFile) {
   if (!imageFile) return { data: created, error: null };
 
   // Upload image and patch item_image_url
-  const { publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
+  const { publicUrl, signedUrl, path, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
   if (uploadErr) {
     // Keep the item, but surface error to caller
     return { data: created, error: uploadErr };
   }
-  const { data: updated, error: patchErr } = await tryUpdateItemImageUrl(created.id, publicUrl);
+  // Prefer permanent public URL if policy/bucket allows; else use signed URL temporarily
+  const imageUrl = publicUrl || signedUrl || '';
+  const { data: updated, error: patchErr } = await tryUpdateItemImageUrl(created.id, imageUrl);
   // If patch fails (e.g., column missing), still return created
   return { data: updated || created, error: patchErr || null };
 }
@@ -243,9 +245,10 @@ export async function updateItemImage(eventId, itemId, file) {
   if (!eventId || !itemId || !file) {
     return { data: null, error: new Error('Missing parameters') };
   }
-  const { publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, itemId, file);
+  const { publicUrl, signedUrl, path, error: uploadErr } = await uploadPublicImageToBucket(eventId, itemId, file);
   if (uploadErr) return { data: null, error: uploadErr };
-  const { data, error: patchErr } = await tryUpdateItemImageUrl(itemId, publicUrl);
+  const imageUrl = publicUrl || signedUrl || '';
+  const { data, error: patchErr } = await tryUpdateItemImageUrl(itemId, imageUrl);
   return { data, error: patchErr || null };
 }
 
