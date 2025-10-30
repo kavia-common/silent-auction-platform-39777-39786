@@ -19,6 +19,20 @@ REACT_APP_SUPABASE_KEY=<your supabase anon/public key>
 # Optional: enable extra storage logging for local troubleshooting (not recommended for prod)
 # REACT_APP_DEBUG_STORAGE=true
 
+Storage bucket required (Supabase > Storage > Buckets):
+- Bucket slug: the-auction-images
+- Public: enabled (true)
+- Policies:
+  - Public read objects (select) where bucket_id = 'the-auction-images'
+  - Authenticated insert objects (insert) with check bucket_id = 'the-auction-images'
+  - Authenticated update objects (update) using/check bucket_id = 'the-auction-images'
+  - Authenticated delete objects (delete) using bucket_id = 'the-auction-images'
+
+CORS (Supabase > Storage > Settings):
+- Allowed origins: http://localhost:3000, https://*.vercel.app, and your production domain
+- Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+- Headers: authorization, x-client-info, content-type, apikey
+
 ## Getting Started
 
 In the project directory, you can run:

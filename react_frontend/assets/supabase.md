@@ -9,6 +9,69 @@ Environment variables required (set in your .env for the react_frontend containe
 
 The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in development. Missing values will throw an error on startup so you can fix your .env.
 
+## Storage: Public Bucket for Auction Images
+
+Bucket ID (slug): the-auction-images
+Access model: Public read, authenticated write/update/delete (public_read_app_write)
+
+Create or verify the bucket and its policies in the Supabase SQL Editor:
+
+```sql
+-- Ensure bucket exists and is public
+insert into storage.buckets (id, name, public)
+values ('the-auction-images','the-auction-images', true)
+on conflict (id) do update set public = excluded.public, name = excluded.name;
+
+-- RLS policies (idempotent pattern via exception handling)
+do $$
+begin
+  begin
+    create policy "Public read objects" on storage.objects
+    for select
+    using ( bucket_id = 'the-auction-images' );
+  exception when duplicate_object then null; end;
+
+  begin
+    create policy "Authenticated insert objects" on storage.objects
+    for insert to authenticated
+    with check ( bucket_id = 'the-auction-images' );
+  exception when duplicate_object then null; end;
+
+  begin
+    create policy "Authenticated update objects" on storage.objects
+    for update to authenticated
+    using ( bucket_id = 'the-auction-images')
+    with check ( bucket_id = 'the-auction-images');
+  exception when duplicate_object then null; end;
+
+  begin
+    create policy "Authenticated delete objects" on storage.objects
+    for delete to authenticated
+    using ( bucket_id = 'the-auction-images');
+  exception when duplicate_object then null; end;
+end $$;
+```
+
+CORS:
+- In Supabase Dashboard > Storage > Settings, add allowed origins:
+  - http://localhost:3000
+  - https://*.vercel.app
+  - Your production domain(s)
+- Allowed methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+- Allowed headers: authorization, x-client-info, content-type, apikey
+
+Frontend usage:
+- Bucket slug constant: src/constants/storage.js (AUCTION_IMAGES_BUCKET = 'the-auction-images')
+- Upload/list via src/services/storageService.js
+- Public URLs fetched using storage.getPublicUrl(path)
+
+Troubleshooting:
+- If you see "Unable to access bucket 'the-auction-images' on project '<ref>'":
+  1) Verify bucket exists and is public in Storage > Buckets
+  2) Confirm policies above are applied
+  3) Ensure REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY match the correct project (anon key)
+  4) Check CORS settings and browser console network errors
+
 ## Applying the Database Schema
 
 1) Open Supabase Dashboard > SQL Editor.
@@ -105,15 +168,15 @@ The Create Event page can send a magic link to the host email (if provided).
 ## Frontend Entry Points
 
 - Supabase client: src/lib/supabaseClient.js (validates envs; single client instance)
-- Create flow: src/pages/CreateEvent.js (inserts without id; shows Supabase error messages)
+- Storage constants: src/constants/storage.js (AUCTION_IMAGES_BUCKET = 'the-auction-images')
+- Storage service: src/services/storageService.js (verifyBucketExists, uploadPublicImageToBucket)
+- Create flow: src/pages/CreateEvent.js
 - Join flow (two-step):
-  - Step 1: src/pages/JoinEventCode.js (validate code)
-  - Step 2: src/pages/JoinEventName.js (optional name, then navigate to auction room)
-  - Legacy: src/pages/JoinEvent.js (redirects to /join)
-- events.code is unique in the schema and looked up with .limit(1).maybeSingle() to guard against any legacy data inconsistencies that might otherwise trigger "Cannot coerce the result to a single JSON object".
-- events.name may not be unique; we use an exact match with .limit(1).maybeSingle() and show a friendly error if Supabase reports multiple matches. Prefer joining by code in cases of duplicate names.
-- Bidding view: src/pages/BidderView.js (loads event by code, realtime items/bids)
-- Host dashboard: src/pages/HostDashboard.js (manage items; see high bids)
+  - Step 1: src/pages/JoinEventCode.js
+  - Step 2: src/pages/JoinEventName.js
+  - Legacy: src/pages/JoinEvent.js
+- Bidding view: src/pages/BidderView.js
+- Host dashboard: src/pages/HostDashboard.js
 
 ## Notes
 
