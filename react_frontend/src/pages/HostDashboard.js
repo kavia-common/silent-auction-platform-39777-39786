@@ -66,7 +66,7 @@ export default function HostDashboard() {
       getBidsTimeSeries(eventId, { bucketSizeMs: 30_000, durationMs: 30 * 60 * 1000 })
     ]);
     const rows = (items || []).map(it => {
-      const title = (it.title && String(it.title).trim()) ? it.title : (it.name || '');
+      const title = (it.title && String(it.title).trim()) ? it.title : '';
       return {
         id: it.id,
         title,

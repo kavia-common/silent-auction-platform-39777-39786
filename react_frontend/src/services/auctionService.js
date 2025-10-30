@@ -281,7 +281,8 @@ export async function listItems(eventId) {
     supabase
       .from('items')
       // Select explicit columns so we can rely on optional image fields when present
-      .select('id, event_id, title, name, description, starting_bid, created_at, image_path, item_image_url, image_url')
+      // Note: schema defines 'title' (not 'name'); include legacy fields only if present
+      .select('id, event_id, title, description, starting_bid, created_at, image_path, item_image_url, image_url')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
@@ -471,7 +472,7 @@ export async function getWinnersForEvent(eventId) {
   const { data: itemsData, error: itemsErr } = await withShortRetry(() =>
     supabase
       .from('items')
-      .select('id, title, name, starting_bid, event_id, created_at')
+      .select('id, title, starting_bid, event_id, created_at')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true })
   );
@@ -661,6 +662,7 @@ export function subscribeToBidsForEvent(eventId, onChange) {
 
 export function getItemDisplayFields(item) {
   /** Returns normalized fields for displaying an item including image path or legacy URL. */
+  // Primary schema column is 'title'. Some older datasets may still have 'name'; use it only as a display fallback.
   const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
   // Prefer new image_path; keep legacy url for backward compatibility
   const imagePath = item?.image_path || '';
