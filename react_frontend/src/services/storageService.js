@@ -182,25 +182,38 @@ export async function getSignedImageUrl(path, expiresIn = 3600) {
 /**
  * PUBLIC_INTERFACE
  * Derive a display URL for an object path.
- * Tries createSignedUrl first; if that fails, falls back to getPublicUrl.
+ * For a public-read bucket, return the public URL directly without requiring auth.
+ * If public URL cannot be formed (misconfiguration or private bucket), fall back to a signed URL.
  * Returns { url, error } where url is safe to use in <img src>.
  */
 // PUBLIC_INTERFACE
 export async function getDisplayUrlForPath(path, opts = {}) {
   const expiresIn = Number(opts.expiresIn || 3600);
   if (!path) return { url: null, error: new Error('Path is required') };
-  // Try signed URL first
+
+  // Prefer public URL for public-read bucket. This does not require auth/session.
+  try {
+    const { data } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
+    const publicUrl = data?.publicUrl || null;
+    if (publicUrl) {
+      return { url: publicUrl, error: null };
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[storage] getPublicUrl threw exception; will try signed', { path, message: e?.message });
+  }
+
+  // If public URL isn't available (e.g., bucket is private), try a signed URL
   const { signedUrl, error: signErr } = await getSignedImageUrl(path, expiresIn);
   if (signedUrl && !signErr) return { url: signedUrl, error: null };
-  // Fallback to public URL (do not display raw URL in text; only use as img src)
-  const { data } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
-  const publicUrl = data?.publicUrl || null;
-  if (!publicUrl) {
-    // eslint-disable-next-line no-console
-    console.warn('[storage] Failed to resolve display URL for image_path:', { path, signErr: signErr?.message });
-    return { url: null, error: signErr || new Error('Could not derive display URL') };
-  }
-  return { url: publicUrl, error: null };
+
+  // All strategies failed; log minimal diagnostics
+  // eslint-disable-next-line no-console
+  console.warn('[storage] Failed to resolve display URL for image_path', {
+    path,
+    signErr: signErr?.message
+  });
+  return { url: null, error: signErr || new Error('Could not derive display URL') };
 }
 
 // Backward-compatible export name (previous code expects this):

@@ -16,9 +16,11 @@ import {
 import { getOrCreateClientId } from '../lib/clientId';
 import { getDisplayUrlForPath } from '../services/storageService';
 
-// Small helper component to resolve image URL at runtime for bidders.
-// Uses items.image_path consistently and does not rely on any host state.
-// Adds safe console logs and a robust placeholder for failures.
+/**
+ * PUBLIC_INTERFACE
+ * Resolve an item's image URL for display in bidder view using items.image_path.
+ * This helper logs minimal diagnostics and returns a placeholder state when no image is available.
+ */
 function ItemImageRenderer({ item }) {
   const disp = getItemDisplayFields(item);
   const [src, setSrc] = useState('');
@@ -180,6 +182,18 @@ export default function BidderView() {
       return;
     }
     const list = data || [];
+    // quick diagnostics: how many items have image_path?
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const counts = {
+          withImage: list.filter(i => i?.image_path).length,
+          withoutImage: list.filter(i => !i?.image_path).length
+        };
+        if (counts.withoutImage > 0) {
+          console.info('[bidder] Items loaded', { total: list.length, ...counts });
+        }
+      } catch {}
+    }
     setItems(list);
     list.forEach((it) => loadHighBid(it.id));
     attachBidRealtime(list);
@@ -438,6 +452,7 @@ export default function BidderView() {
               highBid={highBids[it.id] ?? null}
               allowBid={!isClosed}
               onBid={handleBid(it)}
+              hideImage
             />
           </div>
         ))}

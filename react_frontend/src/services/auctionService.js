@@ -270,11 +270,25 @@ export async function listItems(eventId) {
   const call = () =>
     supabase
       .from('items')
-      // Explicit columns; image rendering uses only image_path to avoid host-only state or legacy URL fields.
-      .select('id, event_id, title, description, starting_bid, created_at, image_path')
+      // Keep explicit fields and ensure image_path is selected.
+      .select('id, event_id, title, name, description, starting_bid, created_at, image_path')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
+
+  // Console-safe diagnostics for potential image_path mismatches
+  if (!error && Array.isArray(data)) {
+    const bad = data.filter((it) => it.image_path && typeof it.image_path === 'string' && it.image_path.startsWith('http'));
+    if (bad.length > 0 && process.env.NODE_ENV !== 'test') {
+      try {
+        console.warn('[auction] Detected items with full URLs in image_path; expected storage object path (e.g., folder/key.jpg)', {
+          count: bad.length,
+          examples: bad.slice(0, 2).map((b) => ({ id: b.id, image_path: b.image_path }))
+        });
+      } catch {}
+    }
+  }
+
   return { data, error };
 }
 
@@ -654,6 +668,18 @@ export function getItemDisplayFields(item) {
   // Primary schema column is 'title'. Some older datasets may still have 'name'; use it only as a display fallback.
   const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
   const imagePath = item?.image_path || '';
+
+  // Log potential formatting issues to help diagnose: missing folder or bucket prefix confusion
+  if (imagePath && process.env.NODE_ENV !== 'test') {
+    try {
+      if (/^https?:\/\//i.test(imagePath)) {
+        console.warn('[auction] image_path appears to be a full URL; expected storage key path', { id: item?.id, image_path: imagePath });
+      } else if (imagePath.startsWith('the-auction-images/')) {
+        console.warn('[auction] image_path contains bucket prefix; expected object path without bucket name', { id: item?.id, image_path: imagePath });
+      }
+    } catch {}
+  }
+
   return { title, imagePath };
 }
 

@@ -79,7 +79,7 @@ function ItemImage({ item, displayTitle }) {
 }
 
 // PUBLIC_INTERFACE
-export default function ItemCard({ item, highBid, allowBid = false, onBid, onDelete, onAddImage }) {
+export default function ItemCard({ item, highBid, allowBid = false, onBid, onDelete, onAddImage, hideImage = false }) {
   /**
    * Card for displaying an auction item.
    * Props:
@@ -135,7 +135,7 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
           )}
         </div>
       </div>
-      <ItemImage item={item} displayTitle={displayTitle} />
+      {!hideImage && <ItemImage item={item} displayTitle={displayTitle} />}
       {item?.description ? <p className="card__text">{item.description}</p> : null}
       <div className="item-card__meta">
         <span className="badge">Starting: {Number(item?.starting_bid || 0).toLocaleString()}</span>
