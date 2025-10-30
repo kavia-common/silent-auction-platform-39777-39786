@@ -196,6 +196,8 @@ export async function getDisplayUrlForPath(path, opts = {}) {
   const { data } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
   const publicUrl = data?.publicUrl || null;
   if (!publicUrl) {
+    // eslint-disable-next-line no-console
+    console.warn('[storage] Failed to resolve display URL for image_path:', { path, signErr: signErr?.message });
     return { url: null, error: signErr || new Error('Could not derive display URL') };
   }
   return { url: publicUrl, error: null };

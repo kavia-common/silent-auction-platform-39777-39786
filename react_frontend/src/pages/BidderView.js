@@ -20,30 +20,77 @@ import { getDisplayUrlForPath } from '../services/storageService';
 function ItemImageRenderer({ item }) {
   const disp = getItemDisplayFields(item);
   const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
+    setFailed(false);
     async function resolve() {
       if (!disp.imagePath) {
         if (!cancelled) setSrc('');
         return;
       }
-      const { url } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
-      if (!cancelled) setSrc(url || '');
+      try {
+        const { url, error } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
+        if (error || !url) {
+          // eslint-disable-next-line no-console
+          console.warn('[bidder] Image URL resolution failed', { itemId: item?.id, image_path: disp.imagePath, message: error?.message });
+          if (!cancelled) {
+            setSrc('');
+            setFailed(true);
+          }
+        } else if (!cancelled) {
+          setSrc(url);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[bidder] Exception resolving image URL', { itemId: item?.id, image_path: disp.imagePath, message: e?.message });
+        if (!cancelled) {
+          setSrc('');
+          setFailed(true);
+        }
+      }
     }
     resolve();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disp.imagePath, item?.id]);
 
-  if (!src) return null;
-  return (
-    <img
-      src={src}
-      alt={disp.title ? `${disp.title} image` : 'Item image'}
-      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-    />
-  );
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={disp.title ? `${disp.title} image` : 'Item image'}
+        style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+        onError={(e) => { 
+          e.currentTarget.style.display = 'none'; 
+          // eslint-disable-next-line no-console
+          console.warn('[bidder] <img> failed to load', { itemId: item?.id, image_path: disp.imagePath });
+        }}
+      />
+    );
+  }
+
+  // Graceful placeholder (no raw URL text)
+  return failed ? (
+    <div
+      aria-hidden="true"
+      style={{
+        width: '100%',
+        height: 200,
+        borderRadius: 8,
+        border: '1px dashed var(--border)',
+        background: '#f8fafc',
+        display: 'grid',
+        placeItems: 'center',
+        color: '#9ca3af',
+        marginBottom: 8
+      }}
+      title="Image unavailable"
+    >
+      Image unavailable
+    </div>
+  ) : null;
 }
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';

@@ -3,30 +3,77 @@ import { getDisplayUrlForPath } from '../services/storageService';
 
 function ItemImage({ item, displayTitle }) {
   const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
+    setFailed(false);
     async function run() {
       const path = item?.image_path || '';
       if (!path) {
         if (!cancelled) setSrc('');
         return;
       }
-      const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
-      if (!cancelled) setSrc(url || '');
+      try {
+        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+        if (error || !url) {
+          // eslint-disable-next-line no-console
+          console.warn('[item-card] Image URL resolution failed', { itemId: item?.id, image_path: path, message: error?.message });
+          if (!cancelled) {
+            setSrc('');
+            setFailed(true);
+          }
+        } else if (!cancelled) {
+          setSrc(url);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[item-card] Exception resolving image URL', { itemId: item?.id, image_path: path, message: e?.message });
+        if (!cancelled) {
+          setSrc('');
+          setFailed(true);
+        }
+      }
     }
     run();
     return () => { cancelled = true; };
   }, [item?.id, item?.image_path]);
 
-  if (!src) return null;
-  return (
-    <img
-      src={src}
-      alt={displayTitle ? `${displayTitle} image` : 'Item image'}
-      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-    />
-  );
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={displayTitle ? `${displayTitle} image` : 'Item image'}
+        style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+        onError={(e) => { 
+          e.currentTarget.style.display = 'none'; 
+          // eslint-disable-next-line no-console
+          console.warn('[item-card] <img> failed to load', { itemId: item?.id, image_path: item?.image_path });
+        }}
+      />
+    );
+  }
+
+  // Graceful placeholder
+  return failed ? (
+    <div
+      aria-hidden="true"
+      style={{
+        width: '100%',
+        height: 200,
+        borderRadius: 8,
+        border: '1px dashed var(--border)',
+        background: '#f8fafc',
+        display: 'grid',
+        placeItems: 'center',
+        color: '#9ca3af',
+        marginBottom: 8
+      }}
+      title="Image unavailable"
+    >
+      Image unavailable
+    </div>
+  ) : null;
 }
 
 // PUBLIC_INTERFACE
