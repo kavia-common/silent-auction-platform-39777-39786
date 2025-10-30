@@ -86,7 +86,7 @@ export async function checkStorageAccess() {
   } else if (probe.kind === 'unauthorized') {
     message = `Unauthorized (401) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Ensure REACT_APP_SUPABASE_KEY is the anon public key and review Storage policies.`;
   } else if (probe.kind === 'forbidden') {
-    message = `Forbidden (403) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Update Storage policies and ensure you use user-id-prefixed paths.`;
+    message = `Forbidden (403) to access bucket "${AUCTION_IMAGES_BUCKET}" on project "${projectRef}". Update Storage policies to allow public inserts and reads.`;
   }
   return { ok: false, kind: probe.kind, message, error: probe.error || null };
 }
@@ -109,73 +109,58 @@ export async function verifyBucketExists() {
 }
 
 /**
+ * Generate a simple UUID v4 string without external deps.
+ */
+function uuidv4() {
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+  );
+}
+
+/**
  * PUBLIC_INTERFACE
- * Upload an item image enforcing RLS path prefix `${user.id}/${uuid}.${ext}`.
- * Returns { path, error } and intentionally does NOT expose a public URL to avoid public path usage.
+ * Upload an item image with public-insert policy support.
+ * Behavior:
+ * - If there is a session, prefer user-id path: <user.id>/<uuid>.<ext>
+ * - If no session, fall back to 'public/' prefix: public/<uuid>.<ext>
+ * - Returns { path, publicUrl, error }
  */
 // PUBLIC_INTERFACE
-export async function uploadItemImage(file) {
-  /**
-   * Ensures there is an authenticated session (host via magic link),
-   * then uploads into bucket using a user-id-prefixed key to satisfy storage RLS:
-   *   <user_id>/<uuid>.<ext>
-   */
-  if (!file) return { path: null, error: new Error('No file provided') };
-
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  if (sessionErr) {
-    log.warn('Failed to get session for upload:', sessionErr);
-  }
-  const session = sessionData?.session || null;
-  const user = session?.user || null;
-
-  if (!user?.id) {
-    const hint = 'Please sign in via your magic link to upload images. Once authenticated, try again.';
-    const friendly = new Error(`No authenticated session. ${hint}`);
-    // For developers: extra console context
-    log.error('Upload blocked: no session. Ensure magic link sign-in completed before uploading.');
-    return { path: null, error: friendly };
-  }
+export async function uploadPublicOrPrivateItemImage(file) {
+  if (!file) return { path: null, publicUrl: null, error: new Error('No file provided') };
 
   // Ensure bucket reachable
   try {
     await verifyBucketExists();
   } catch (e) {
-    return { path: null, error: e };
+    return { path: null, publicUrl: null, error: e };
   }
 
-  // Build user-id-prefixed path
-  const ext = deriveExtension(file);
-  // Simple uuid v4-ish without external deps
-  const uuid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-  );
-  const path = `${user.id}/${uuid}.${ext}`;
+  // Try get session, but don't require it
+  let userId = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    userId = data?.session?.user?.id || null;
+  } catch {
+    userId = null;
+  }
 
-  // Upload with upsert=false to avoid accidental overwrite
+  const ext = deriveExtension(file);
+  const key = userId ? `${userId}/${uuidv4()}.${ext}` : `public/${uuidv4()}.${ext}`;
+
   const { error: uploadErr } = await supabase.storage
     .from(AUCTION_IMAGES_BUCKET)
-    .upload(path, file, { cacheControl: '3600', upsert: false });
+    .upload(key, file, { cacheControl: '3600', upsert: false });
 
   if (uploadErr) {
-    const msg = (uploadErr.message || '').toLowerCase();
-    if (uploadErr.status === 403 || msg.includes('forbidden') || msg.includes('permission')) {
-      log.error('RLS/permission error during upload. Likely path not prefixed with auth.uid() or wrong user. Details:', uploadErr);
-      return { path: null, error: new Error('Upload failed due to storage policies. Ensure you are signed in and the upload path matches your user ID.') };
-    }
-    if (uploadErr.status === 401 || msg.includes('unauthorized')) {
-      log.error('Unauthorized upload attempt. Session may have expired.', uploadErr);
-      return { path: null, error: new Error('Unauthorized to upload. Please re-authenticate via magic link.') };
-    }
-    if (uploadErr.status === 404 || msg.includes('not found')) {
-      log.error('Bucket not found when uploading to', AUCTION_IMAGES_BUCKET, uploadErr);
-      return { path: null, error: new Error(`Storage bucket "${AUCTION_IMAGES_BUCKET}" not found. Verify your Supabase Storage setup.`) };
-    }
-    log.error('Unexpected upload error:', uploadErr);
-    return { path: null, error: new Error(uploadErr.message || 'Upload failed') };
+    return { path: null, publicUrl: null, error: new Error(uploadErr.message || 'Upload failed') };
   }
 
-  return { path, error: null };
+  // Attempt to compute public URL
+  const { data: pub } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(key);
+  const publicUrl = pub?.publicUrl || null;
+
+  return { path: key, publicUrl, error: null };
 }
 
 /**
@@ -184,20 +169,11 @@ export async function uploadItemImage(file) {
  */
 // PUBLIC_INTERFACE
 export async function getSignedImageUrl(path, expiresIn = 3600) {
-  /**
-   * Returns { signedUrl, error } for the given storage object path within the bucket.
-   * Requires bucket policies to allow createSignedUrl for the current role.
-   */
   if (!path) return { signedUrl: null, error: new Error('Path is required') };
   const { data, error } = await supabase.storage
     .from(AUCTION_IMAGES_BUCKET)
     .createSignedUrl(path, expiresIn);
   if (error) {
-    log.error('Failed to create signed URL:', error);
-    const msg = (error.message || '').toLowerCase();
-    if (error.status === 403 || msg.includes('forbidden') || msg.includes('permission')) {
-      return { signedUrl: null, error: new Error('Cannot create signed URL due to storage policies.') };
-    }
     return { signedUrl: null, error: new Error(error.message || 'Failed to create signed URL') };
   }
   return { signedUrl: data?.signedUrl || null, error: null };
@@ -207,17 +183,29 @@ export async function getSignedImageUrl(path, expiresIn = 3600) {
 // PUBLIC_INTERFACE
 export async function uploadPublicImageToBucket(eventId, itemId, file) {
   /**
-   * Legacy wrapper that now enforces private, user-id-prefixed storage paths and returns a signed URL.
-   * Returns { path, publicUrl: null, signedUrl, error }.
+   * Updated wrapper for uploads compatible with public insert policy.
+   * Returns { path, publicUrl, signedUrl: null, error }.
    */
-  const { path, error } = await uploadItemImage(file);
-  if (error) return { path: null, publicUrl: null, signedUrl: null, error };
-  // Attempt to return a short-lived signed URL for immediate preview
-  const { signedUrl, error: signErr } = await getSignedImageUrl(path, 3600);
-  if (signErr) {
-    return { path, publicUrl: null, signedUrl: null, error: signErr };
+  const { path, publicUrl, error } = await uploadPublicOrPrivateItemImage(file);
+  return { path, publicUrl: publicUrl || null, signedUrl: null, error };
+}
+
+// Legacy private upload retained for callers that want explicit session requirement
+// PUBLIC_INTERFACE
+export async function uploadItemImage(file) {
+  if (!file) return { path: null, error: new Error('No file provided') };
+  // Require session
+  const { data: sessionData } = await supabase.auth.getSession();
+  const user = sessionData?.session?.user || null;
+  if (!user?.id) {
+    return { path: null, error: new Error('No authenticated session.') };
   }
-  return { path, publicUrl: null, signedUrl, error: null };
+  await verifyBucketExists();
+  const ext = deriveExtension(file);
+  const key = `${user.id}/${uuidv4()}.${ext}`;
+  const { error } = await supabase.storage.from(AUCTION_IMAGES_BUCKET).upload(key, file, { cacheControl: '3600', upsert: false });
+  if (error) return { path: null, error: new Error(error.message || 'Upload failed') };
+  return { path: key, error: null };
 }
 
 // PUBLIC_INTERFACE
@@ -225,8 +213,9 @@ export { AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 export default {
   uploadItemImage,
+  uploadPublicOrPrivateItemImage,
   getSignedImageUrl,
-  uploadPublicImageToBucket, // legacy alias
+  uploadPublicImageToBucket, // legacy alias points to public-capable flow
   verifyBucketExists,
   checkStorageAccess,
 };

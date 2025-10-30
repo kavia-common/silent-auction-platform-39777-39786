@@ -200,8 +200,12 @@ async function tryUpdateItemImageUrl(itemId, imageUrl) {
 export async function addItem(eventId, item, imageFile) {
   /**
    * Add new item to an event.
-   * If imageFile is provided, uploads to storage and patches items.item_image_url.
+   * Image is required; uploads to storage and patches items.item_image_url.
    */
+  if (!imageFile) {
+    return { data: null, error: new Error('Please select an image to continue') };
+  }
+
   const payload = {
     event_id: eventId,
     title: item.title,
@@ -211,9 +215,6 @@ export async function addItem(eventId, item, imageFile) {
   const insertCall = () => supabase.from('items').insert([payload]).select('*').single();
   const { data: created, error: createErr } = await withShortRetry(insertCall);
   if (createErr) return { data: null, error: createErr };
-
-  // If no image, return immediately
-  if (!imageFile) return { data: created, error: null };
 
   // Upload image and patch item_image_url
   const { publicUrl, signedUrl, path, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);

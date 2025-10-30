@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from './Modal';
-import { verifyBucketExists, uploadItemImage, getSignedImageUrl } from '../services/storageService';
+import { verifyBucketExists, uploadPublicImageToBucket } from '../services/storageService';
 import { AUCTION_IMAGES_LABEL, AUCTION_IMAGES_BUCKET } from '../constants/storage';
 
 /**
- * Refactored AddItemModal:
- * - Enforces private, user-id-prefixed paths and requires authenticated host session.
- * - Displays a signed URL for preview; avoids public URLs when using private buckets.
+ * AddItemModal (public-upload compatible):
+ * - Requires an image before submission (client validation, inline errors)
+ * - Upload works without an authenticated session using bucket policies
+ * - Submit button disabled until a valid image is selected; shows uploading state
+ * - Presents public URL on success for immediate UI display
  */
 // PUBLIC_INTERFACE
 export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   /** Simple image upload dialog for a single image file. */
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
-  const [signedUrl, setSignedUrl] = useState('');
+  const [publicUrl, setPublicUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
@@ -27,7 +29,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
     if (!open) {
       setFile(null);
       setPreviewUrl('');
-      setSignedUrl('');
+      setPublicUrl('');
       setError('');
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -52,7 +54,7 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   };
 
   const validateFile = (f) => {
-    if (!f) return 'Please select an image file.';
+    if (!f) return 'Please select an image to continue';
     if (f.size > MAX_SIZE_BYTES) return `File too large. Max ${Math.round(MAX_SIZE_BYTES / (1024 * 1024))} MB.`;
     // If type is missing (some browsers), fall back to basic extension test
     const typeOk = f.type ? ACCEPTED_TYPES.includes(f.type) : /\.(png|jpe?g|webp|gif)$/i.test(f.name || '');
@@ -77,13 +79,13 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
   const onUpload = async (e) => {
     e.preventDefault();
     setError('');
-    setSignedUrl('');
+    setPublicUrl('');
     if (!eventId) {
       setError('Missing event context.');
       return;
     }
     if (!file) {
-      setError('Please choose an image first.');
+      setError('Please select an image to continue');
       return;
     }
     const msg = validateFile(file);
@@ -94,22 +96,14 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
 
     setBusy(true);
     try {
-      // Upload using user-id-prefixed path; requires authenticated session
-      const { path, error: uploadErr } = await uploadItemImage(file);
+      // Upload works without an authenticated session; storage policy allows public insert
+      const { path, publicUrl: pUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, 'new', file);
       if (uploadErr) {
-        setError(uploadErr.message || 'Failed to upload image. Ensure you are signed in via magic link.');
+        setError(uploadErr.message || 'Failed to upload image.');
         return;
       }
-
-      // Provide a signed URL for immediate preview
-      const { signedUrl: url, error: signErr } = await getSignedImageUrl(path, 3600);
-      if (signErr) {
-        setError(signErr.message || 'Image uploaded but failed to create signed URL.');
-        return;
-      }
-
-      setSignedUrl(url || '');
-      if (typeof onUploaded === 'function') onUploaded({ path, signedUrl: url || '' });
+      setPublicUrl(pUrl || '');
+      if (typeof onUploaded === 'function') onUploaded({ path, publicUrl: pUrl || '' });
     } catch (ex) {
       setError(ex?.message || 'Unexpected error during upload.');
     } finally {
@@ -159,12 +153,11 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
               <span className="hint">PNG/JPG/WEBP/GIF, up to 8 MB</span>
             )}
           </div>
-          <div id="ai-image-hint" className="hint">Only a single image is required.</div>
+          <div id="ai-image-hint" className="hint">Please select an image to continue.</div>
           <div className="hint">
             Uploads use storage bucket: <strong>{AUCTION_IMAGES_LABEL}</strong>
             <span className="hint"> (id: {BUCKET})</span>
           </div>
-          <div className="hint">Note: You must be authenticated via your magic link to upload.</div>
         </div>
 
         {previewUrl ? (
@@ -178,16 +171,16 @@ export default function AddItemModal({ open, onClose, eventId, onUploaded }) {
           </div>
         ) : null}
 
-        {signedUrl ? (
+        {publicUrl ? (
           <div className="field">
-            <label className="field__label">Signed URL (1 hour)</label>
+            <label className="field__label">Public URL</label>
             <input
               readOnly
               className="field__input"
-              value={signedUrl}
+              value={publicUrl}
               onFocus={(e) => e.target.select()}
             />
-            <div className="hint">Use this URL temporarily in the app; it will expire. Store the object path for long-term persistence.</div>
+            <div className="hint">This URL is publicly accessible and will be used for the item image.</div>
           </div>
         ) : null}
 
