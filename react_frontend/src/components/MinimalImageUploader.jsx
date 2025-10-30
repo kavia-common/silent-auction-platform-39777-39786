@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { uploadPublicImageToBucket } from '../services/storageService';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { uploadPublicImageToBucket, checkStorageAccess } from '../services/storageService';
 
 /**
  * Minimal image uploader with drag-and-drop or click-to-select.
@@ -19,6 +19,19 @@ export default function MinimalImageUploader({ eventId, itemId, onComplete }) {
   const inputRef = useRef(null);
 
   const disabled = useMemo(() => busy || !eventId || !itemId, [busy, eventId, itemId]);
+
+  // On mount, probe storage access and surface any issues immediately
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const res = await checkStorageAccess();
+      if (!mounted) return;
+      if (!res.ok) {
+        setStatus(res.message || 'Unable to access storage bucket.');
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const handleFiles = useCallback(async (files) => {
     const file = files && files[0];
