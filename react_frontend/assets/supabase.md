@@ -1,6 +1,6 @@
 # Supabase Integration - Silent Auction App (Frontend)
 
-This app uses Supabase for database, realtime, and optional magic-link auth.
+This app uses Supabase for database, realtime, storage, and optional magic-link auth.
 
 Environment variables required (set in your .env for the react_frontend container):
 - REACT_APP_SUPABASE_URL
@@ -14,43 +14,31 @@ The frontend validates REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY in deve
 Bucket ID (slug): the-auction-images
 Access model: Public read, authenticated write/update/delete (public_read_app_write)
 
-Create or verify the bucket and its policies in the Supabase SQL Editor:
+We require:
+- Bucket exists and is marked public (for read)
+- RLS policies on storage.objects:
+  - Public read of objects for this bucket
+  - Authenticated users can insert, update, delete, and list objects in this bucket
+  - No anonymous inserts (uploads require an authenticated session)
 
-```sql
--- Ensure bucket exists and is public
-insert into storage.buckets (id, name, public)
-values ('the-auction-images','the-auction-images', true)
-on conflict (id) do update set public = excluded.public, name = excluded.name;
+How to apply (idempotent SQL migration):
+- Preferred: Run the migration file with a role that owns storage.objects (e.g., in Supabase SQL Editor which runs as supabase_admin) or via backend using the service_role key.
+- File to run: assets/sql_patches/storage_the_auction_images_policies.sql
 
--- RLS policies (idempotent pattern via exception handling)
-do $$
-begin
-  begin
-    create policy "Public read objects" on storage.objects
-    for select
-    using ( bucket_id = 'the-auction-images' );
-  exception when duplicate_object then null; end;
+For reference, the SQL includes:
+- Upsert bucket:
+  insert into storage.buckets (id, name, public)
+  values ('the-auction-images','the-auction-images', true)
+  on conflict (id) do update set public = excluded.public, name = excluded.name;
 
-  begin
-    create policy "Authenticated insert objects" on storage.objects
-    for insert to authenticated
-    with check ( bucket_id = 'the-auction-images' );
-  exception when duplicate_object then null; end;
+- Policies created (guarded by DO blocks for idempotency):
+  - "Public read objects for the-auction-images" (select for all)
+  - "Authenticated list objects for the-auction-images" (select for authenticated; explicit list)
+  - "Authenticated insert objects for the-auction-images" (insert for authenticated with check on bucket)
+  - "Authenticated update objects for the-auction-images" (update for authenticated with using/with check on bucket)
+  - "Authenticated delete objects for the-auction-images" (delete for authenticated with using on bucket)
 
-  begin
-    create policy "Authenticated update objects" on storage.objects
-    for update to authenticated
-    using ( bucket_id = 'the-auction-images')
-    with check ( bucket_id = 'the-auction-images');
-  exception when duplicate_object then null; end;
-
-  begin
-    create policy "Authenticated delete objects" on storage.objects
-    for delete to authenticated
-    using ( bucket_id = 'the-auction-images');
-  exception when duplicate_object then null; end;
-end $$;
-```
+Optional (disabled by requirement): An "Anonymous insert" policy is commented in the SQL file if you later choose to allow unauthenticated uploads.
 
 CORS:
 - In Supabase Dashboard > Storage > Settings, add allowed origins:
@@ -66,11 +54,11 @@ Frontend usage:
 - Public URLs fetched using storage.getPublicUrl(path)
 
 Troubleshooting:
-- If you see "Unable to access bucket 'the-auction-images' on project '<ref>'":
-  1) Verify bucket exists and is public in Storage > Buckets
-  2) Confirm policies above are applied
-  3) Ensure REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY match the correct project (anon key)
-  4) Check CORS settings and browser console network errors
+- If you see "new row violates row-level security policy" on upload:
+  1) Confirm the policies above exist and are enabled.
+  2) Ensure the session performing the upload is authenticated (anon inserts are not allowed).
+  3) Verify bucket_id is exactly 'the-auction-images'.
+  4) Check CORS and browser console network errors.
 
 ## Applying the Database Schema
 
