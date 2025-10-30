@@ -1,11 +1,41 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getDisplayUrlForPath } from '../services/storageService';
+
+function ItemImage({ item, displayTitle }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      const path = item?.image_path || '';
+      if (path) {
+        const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+        if (!cancelled) setSrc(url || '');
+        return;
+      }
+      const legacy = item?.item_image_url || item?.image_url || '';
+      if (!cancelled) setSrc(legacy || '');
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [item?.id, item?.image_path, item?.item_image_url, item?.image_url]);
+
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={displayTitle ? `${displayTitle} image` : 'Item image'}
+      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+    />
+  );
+}
 
 // PUBLIC_INTERFACE
 export default function ItemCard({ item, highBid, allowBid = false, onBid, onDelete, onAddImage }) {
   /**
    * Card for displaying an auction item.
    * Props:
-   * - item: { id, title/name, description, starting_bid }
+   * - item: { id, title/name, description, starting_bid, image_path? }
    * - highBid: number | null
    * - allowBid: boolean
    * - onBid: function(amount) -> Promise or void
@@ -57,17 +87,7 @@ export default function ItemCard({ item, highBid, allowBid = false, onBid, onDel
           )}
         </div>
       </div>
-      {(() => {
-        const url = item?.item_image_url || item?.image_url || '';
-        return url ? (
-          <img
-            src={url}
-            alt={displayTitle ? `${displayTitle} image` : 'Item image'}
-            style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-        ) : null;
-      })()}
+      <ItemImage item={item} displayTitle={displayTitle} />
       {item?.description ? <p className="card__text">{item.description}</p> : null}
       <div className="item-card__meta">
         <span className="badge">Starting: {Number(item?.starting_bid || 0).toLocaleString()}</span>

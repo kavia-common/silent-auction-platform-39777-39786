@@ -179,6 +179,28 @@ export async function getSignedImageUrl(path, expiresIn = 3600) {
   return { signedUrl: data?.signedUrl || null, error: null };
 }
 
+/**
+ * PUBLIC_INTERFACE
+ * Derive a display URL for an object path.
+ * Tries createSignedUrl first; if that fails, falls back to getPublicUrl.
+ * Returns { url, error } where url is safe to use in <img src>.
+ */
+// PUBLIC_INTERFACE
+export async function getDisplayUrlForPath(path, opts = {}) {
+  const expiresIn = Number(opts.expiresIn || 3600);
+  if (!path) return { url: null, error: new Error('Path is required') };
+  // Try signed URL first
+  const { signedUrl, error: signErr } = await getSignedImageUrl(path, expiresIn);
+  if (signedUrl && !signErr) return { url: signedUrl, error: null };
+  // Fallback to public URL (do not display raw URL in text; only use as img src)
+  const { data } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
+  const publicUrl = data?.publicUrl || null;
+  if (!publicUrl) {
+    return { url: null, error: signErr || new Error('Could not derive display URL') };
+  }
+  return { url: publicUrl, error: null };
+}
+
 // Backward-compatible export name (previous code expects this):
 // PUBLIC_INTERFACE
 export async function uploadPublicImageToBucket(eventId, itemId, file) {

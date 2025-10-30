@@ -14,6 +14,41 @@ import {
   getItemDisplayFields
 } from '../services/auctionService';
 import { getOrCreateClientId } from '../lib/clientId';
+import { getDisplayUrlForPath } from '../services/storageService';
+
+// Small helper component to resolve image URL at runtime without exposing raw URL text
+function ItemImageRenderer({ item }) {
+  const disp = getItemDisplayFields(item);
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    async function resolve() {
+      if (disp.imagePath) {
+        const { url } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
+        if (!cancelled) setSrc(url || '');
+        return;
+      }
+      if (disp.legacyUrl) {
+        if (!cancelled) setSrc(disp.legacyUrl);
+      } else {
+        if (!cancelled) setSrc('');
+      }
+    }
+    resolve();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disp.imagePath, disp.legacyUrl, item?.id]);
+
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={disp.title ? `${disp.title} image` : 'Item image'}
+      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
+      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+    />
+  );
+}
 
 const LS_JOIN_CONTEXT = 'auction.joinContext';
 
@@ -346,17 +381,7 @@ export default function BidderView() {
             <div className="card__header">
               <h3 className="card__title">{it.title}</h3>
             </div>
-            {(() => {
-              const disp = getItemDisplayFields(it);
-              return disp.imageUrl ? (
-                <img
-                  src={disp.imageUrl}
-                  alt={disp.title ? `${disp.title} image` : 'Item image'}
-                  style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                />
-              ) : null;
-            })()}
+            <ItemImageRenderer item={it} />
             {it.description ? <p className="card__text">{it.description}</p> : null}
             <div className="item-card__meta">
               <span className="badge">Starting: {Number(it.starting_bid || 0).toLocaleString()}</span>
