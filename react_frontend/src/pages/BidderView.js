@@ -23,21 +23,17 @@ function ItemImageRenderer({ item }) {
   useEffect(() => {
     let cancelled = false;
     async function resolve() {
-      if (disp.imagePath) {
-        const { url } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
-        if (!cancelled) setSrc(url || '');
+      if (!disp.imagePath) {
+        if (!cancelled) setSrc('');
         return;
       }
-      if (disp.legacyUrl) {
-        if (!cancelled) setSrc(disp.legacyUrl);
-      } else {
-        if (!cancelled) setSrc('');
-      }
+      const { url } = await getDisplayUrlForPath(disp.imagePath, { expiresIn: 3600 });
+      if (!cancelled) setSrc(url || '');
     }
     resolve();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disp.imagePath, disp.legacyUrl, item?.id]);
+  }, [disp.imagePath, item?.id]);
 
   if (!src) return null;
   return (

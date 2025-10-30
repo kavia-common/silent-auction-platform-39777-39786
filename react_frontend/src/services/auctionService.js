@@ -182,18 +182,11 @@ export async function getEventByName(name) {
 }
 
 /**
- * Internal: update item with image URL if column exists, otherwise ignore.
+ * (Removed) Legacy helper for item_image_url updates. No-op retained for compatibility.
+ * Calls will be ignored as we no longer reference or persist item_image_url.
  */
-async function tryUpdateItemImageUrl(itemId, imageUrl) {
-  if (!itemId || !imageUrl) return { data: null, error: null };
-  // best-effort update; if column missing, swallow error
-  const { data, error } = await withShortRetry(() =>
-    supabase.from('items').update({ item_image_url: imageUrl }).eq('id', itemId).select('*').single()
-  );
-  if (error && /column .*item_image_url.* does not exist/i.test(error.message || '')) {
-    return { data: null, error: null };
-  }
-  return { data, error };
+async function tryUpdateItemImageUrl() {
+  return { data: null, error: null };
 }
 
 /**
@@ -231,11 +224,8 @@ export async function addItem(eventId, item, imageFile) {
   const { data: created, error: createErr } = await withShortRetry(insertCall);
   if (createErr) return { data: null, error: createErr };
 
-  // If caller passed a legacy url explicitly, try to persist it (do not show in UI text)
-  const initialUrl = item?.image_url || item?.item_image_url || null;
-  if (initialUrl) {
-    await tryUpdateItemImageUrl(created.id, initialUrl);
-  }
+  // Legacy URL fields are no longer persisted. We standardize on image_path only.
+  // Intentionally ignoring item.image_url or item.item_image_url if provided.
 
   // If a file is provided, upload and persist storage key to image_path
   if (imageFile) {
@@ -282,7 +272,7 @@ export async function listItems(eventId) {
       .from('items')
       // Select explicit columns so we can rely on optional image fields when present
       // Note: schema defines 'title' (not 'name'); include legacy fields only if present
-      .select('id, event_id, title, description, starting_bid, created_at, image_path, item_image_url, image_url')
+      .select('id, event_id, title, description, starting_bid, created_at, image_path')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
@@ -661,13 +651,11 @@ export function subscribeToBidsForEvent(eventId, onChange) {
 }
 
 export function getItemDisplayFields(item) {
-  /** Returns normalized fields for displaying an item including image path or legacy URL. */
+  /** Returns normalized fields for displaying an item using image_path only. */
   // Primary schema column is 'title'. Some older datasets may still have 'name'; use it only as a display fallback.
   const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
-  // Prefer new image_path; keep legacy url for backward compatibility
   const imagePath = item?.image_path || '';
-  const legacyUrl = item?.item_image_url || item?.image_url || '';
-  return { title, imagePath, legacyUrl };
+  return { title, imagePath };
 }
 
 export default {

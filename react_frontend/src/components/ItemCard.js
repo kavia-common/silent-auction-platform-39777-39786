@@ -7,17 +7,16 @@ function ItemImage({ item, displayTitle }) {
     let cancelled = false;
     async function run() {
       const path = item?.image_path || '';
-      if (path) {
-        const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
-        if (!cancelled) setSrc(url || '');
+      if (!path) {
+        if (!cancelled) setSrc('');
         return;
       }
-      const legacy = item?.item_image_url || item?.image_url || '';
-      if (!cancelled) setSrc(legacy || '');
+      const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+      if (!cancelled) setSrc(url || '');
     }
     run();
     return () => { cancelled = true; };
-  }, [item?.id, item?.image_path, item?.item_image_url, item?.image_url]);
+  }, [item?.id, item?.image_path]);
 
   if (!src) return null;
   return (

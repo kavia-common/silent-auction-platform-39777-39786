@@ -1,138 +1,77 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { uploadPublicImageToBucket, checkStorageAccess } from '../services/storageService';
+import { useState } from 'react';
+import { uploadPublicOrPrivateItemImage, getDisplayUrlForPath } from '../services/storageService';
+import { updateItemImage } from '../services/auctionService';
 
 /**
- * Minimal image uploader with drag-and-drop or click-to-select.
- * No titles or descriptions; only an image selection area and upload status text.
- *
- * Props:
- * - eventId: string (required)
- * - itemId: string (required)
- * - onComplete?: (result: { path: string|null, publicUrl: string|null, error: Error|null }) => void
+ * PUBLIC_INTERFACE
+ * MinimalImageUploader
+ * - Uploads a single image and persists items.image_path only.
+ * - Displays a preview via a derived URL resolved at runtime.
  */
-// PUBLIC_INTERFACE
-export default function MinimalImageUploader({ eventId, itemId, onComplete }) {
-  /** Minimal image uploader showing only selection area and status. */
-  const [dragOver, setDragOver] = useState(false);
-  const [status, setStatus] = useState('');
+export default function MinimalImageUploader({ eventId, itemId, onUploaded }) {
+  const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef(null);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState('');
 
-  const disabled = useMemo(() => busy || !eventId || !itemId, [busy, eventId, itemId]);
+  const onPick = (e) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
+    setPreview(f ? URL.createObjectURL(f) : '');
+  };
 
-  // On mount, probe storage access and surface any issues immediately
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const res = await checkStorageAccess();
-      if (!mounted) return;
-      if (!res.ok) {
-        setStatus(res.message || 'Unable to access storage bucket.');
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  const handleFiles = useCallback(async (files) => {
-    const file = files && files[0];
-    if (!file || !eventId || !itemId) return;
+  const onUpload = async () => {
+    setError('');
+    if (!eventId || !itemId || !file) {
+      setError('Missing parameters or file');
+      return;
+    }
     setBusy(true);
-    setStatus('Uploading...');
     try {
-      const result = await uploadPublicImageToBucket(eventId, itemId, file);
-      if (result.error) {
-        setStatus(result.error.message || 'Upload failed');
-      } else {
-        setStatus('Image uploaded successfully.');
+      const { path, error: upErr } = await uploadPublicOrPrivateItemImage(file);
+      if (upErr) {
+        setError(upErr.message || 'Upload failed');
+        setBusy(false);
+        return;
       }
-      if (typeof onComplete === 'function') onComplete(result);
-    } catch (e) {
-      setStatus(e?.message || 'Unexpected error');
-      if (typeof onComplete === 'function') onComplete({ path: null, publicUrl: null, error: e });
+      // Persist image_path
+      const { error: patchErr } = await updateItemImage(eventId, itemId, file);
+      if (patchErr) {
+        setError(patchErr.message || 'Failed to save image');
+        setBusy(false);
+        return;
+      }
+      // Optional: resolve display URL once saved
+      if (path) {
+        const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+        if (url) setPreview(url);
+      }
+      if (typeof onUploaded === 'function') onUploaded({ image_path: path });
+    } catch (ex) {
+      setError(ex?.message || 'Unexpected error');
     } finally {
       setBusy(false);
     }
-  }, [eventId, itemId, onComplete]);
-
-  const onDrop = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (disabled) return;
-    const files = e.dataTransfer?.files;
-    if (files && files.length) {
-      handleFiles(files);
-    }
-  }, [disabled, handleFiles]);
-
-  const onDragOver = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!disabled) setDragOver(true);
-  }, [disabled]);
-
-  const onDragLeave = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-  }, []);
-
-  const onPick = useCallback((e) => {
-    const files = e.target.files;
-    if (files && files.length) {
-      handleFiles(files);
-      // Reset the input so selecting the same file again will retrigger change
-      e.target.value = '';
-    }
-  }, [handleFiles]);
-
-  const onClick = useCallback(() => {
-    if (!disabled && inputRef.current) inputRef.current.click();
-  }, [disabled]);
-
-  // Minimal styles inline to keep footprint small
-  const baseStyle = {
-    width: '100%',
-    minHeight: 140,
-    borderRadius: 8,
-    border: '2px dashed #cbd5e1',
-    background: dragOver ? '#eef2ff' : '#f8fafc',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#374151',
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    userSelect: 'none',
-    transition: 'background 120ms ease, border-color 120ms ease'
   };
 
   return (
-    <div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onClick}
-        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick()}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        aria-disabled={disabled}
-        style={baseStyle}
-      >
-        {busy ? 'Uploading...' : (dragOver ? 'Drop image to upload' : 'Click or drop an image')}
+    <div className="card">
+      <div className="card__header">
+        <h3 className="card__title">Upload Image</h3>
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        onChange={onPick}
-        style={{ display: 'none' }}
-        aria-hidden="true"
-        tabIndex={-1}
-        disabled={disabled}
-      />
-      <div aria-live="polite" style={{ marginTop: 8, minHeight: 20, fontSize: 14, color: '#111827' }}>
-        {status}
+      <div className="field">
+        <label htmlFor="miu" className="field__label">Choose image</label>
+        <input id="miu" type="file" accept="image/*" className="field__input" onChange={onPick} />
+      </div>
+      {preview ? (
+        <div className="field">
+          <label className="field__label">Preview</label>
+          <img src={preview} alt="Preview" style={{ width: '100%', maxHeight: 240, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+        </div>
+      ) : null}
+      {error ? <div className="alert alert--error">{error}</div> : null}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn--primary" onClick={onUpload} disabled={!file || busy}>{busy ? 'Uploading...' : 'Upload'}</button>
       </div>
     </div>
   );
