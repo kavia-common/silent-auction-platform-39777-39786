@@ -270,8 +270,8 @@ export async function listItems(eventId) {
   const call = () =>
     supabase
       .from('items')
-      // Keep explicit fields and ensure image_path is selected.
-      .select('id, event_id, title, name, description, starting_bid, created_at, image_path')
+      // Explicit columns; do not select non-existent legacy 'name' field to prevent runtime errors.
+      .select('id, event_id, title, description, starting_bid, created_at, image_path')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
