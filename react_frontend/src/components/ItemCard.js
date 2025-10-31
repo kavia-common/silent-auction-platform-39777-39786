@@ -11,7 +11,7 @@ function ItemImage({ item, displayTitle }) {
     let cancelled = false;
     setFailed(false);
     async function run() {
-      const path = item?.image_path || '';
+      const path = (item?.image_path || '').trim();
       if (!path) {
         if (!cancelled) setSrc('');
         return;

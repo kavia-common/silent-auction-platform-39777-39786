@@ -8,6 +8,33 @@ const log = {
   error: (...args) => { if (process.env.NODE_ENV !== 'test') { try { console.error('[storage]', ...args); } catch {} } },
 };
 
+// Tiny in-memory cache for resolved URLs to avoid repeated generation during a session.
+// Keys use "<bucket>::<path>" to support multiple buckets if needed.
+const _displayUrlCache = new Map();
+/**
+ * INTERNAL: get cached url entry if not expired.
+ */
+function _getCachedDisplayUrl(bucket, path) {
+  if (!bucket || !path) return null;
+  const key = `${bucket}::${path}`;
+  const entry = _displayUrlCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt && Date.now() > entry.expiresAt) {
+    _displayUrlCache.delete(key);
+    return null;
+  }
+  return entry.url || null;
+}
+/**
+ * INTERNAL: set cached url entry with optional TTL in seconds (for signed URLs).
+ */
+function _setCachedDisplayUrl(bucket, path, url, ttlSec = 0) {
+  if (!bucket || !path || !url) return;
+  const key = `${bucket}::${path}`;
+  const expiresAt = ttlSec > 0 ? Date.now() + ttlSec * 1000 : 0;
+  _displayUrlCache.set(key, { url, expiresAt });
+}
+
 /**
  * Derive an extension string from a filename or MIME type.
  */
@@ -181,39 +208,62 @@ export async function getSignedImageUrl(path, expiresIn = 3600) {
 
 /**
  * PUBLIC_INTERFACE
- * Derive a display URL for an object path.
- * For a public-read bucket, return the public URL directly without requiring auth.
- * If public URL cannot be formed (misconfiguration or private bucket), fall back to a signed URL.
+ * Derive a display URL for an object path in a specific bucket.
+ * - Attempts supabase.storage.from(bucket).getPublicUrl(path) first.
+ * - Falls back to createSignedUrl for private buckets.
+ * - Uses a minimal cache to avoid repeated URL generation. Public URLs are cached without TTL.
+ * - Signed URLs are cached with a TTL equal to expiresIn seconds.
  * Returns { url, error } where url is safe to use in <img src>.
  */
 // PUBLIC_INTERFACE
-export async function getDisplayUrlForPath(path, opts = {}) {
+export async function getDisplayUrlForBucketAndPath(bucket, path, opts = {}) {
   const expiresIn = Number(opts.expiresIn || 3600);
   if (!path) return { url: null, error: new Error('Path is required') };
+  const targetBucket = bucket || AUCTION_IMAGES_BUCKET;
+
+  // Cache hit?
+  const cached = _getCachedDisplayUrl(targetBucket, path);
+  if (cached) return { url: cached, error: null };
 
   // Prefer public URL for public-read bucket. This does not require auth/session.
   try {
-    const { data } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(path);
+    const { data } = supabase.storage.from(targetBucket).getPublicUrl(path);
     const publicUrl = data?.publicUrl || null;
     if (publicUrl) {
+      // cache public url indefinitely (no expiry)
+      _setCachedDisplayUrl(targetBucket, path, publicUrl, 0);
       return { url: publicUrl, error: null };
     }
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn('[storage] getPublicUrl threw exception; will try signed', { path, message: e?.message });
+    console.warn('[storage] getPublicUrl threw exception; will try signed', { bucket: targetBucket, path, message: e?.message });
   }
 
   // If public URL isn't available (e.g., bucket is private), try a signed URL
-  const { signedUrl, error: signErr } = await getSignedImageUrl(path, expiresIn);
-  if (signedUrl && !signErr) return { url: signedUrl, error: null };
+  const { data, error } = await supabase.storage.from(targetBucket).createSignedUrl(path, expiresIn);
+  if (!error && data?.signedUrl) {
+    _setCachedDisplayUrl(targetBucket, path, data.signedUrl, expiresIn);
+    return { url: data.signedUrl, error: null };
+  }
 
   // All strategies failed; log minimal diagnostics
   // eslint-disable-next-line no-console
-  console.warn('[storage] Failed to resolve display URL for image_path', {
+  console.warn('[storage] Failed to resolve display URL for image path', {
+    bucket: targetBucket,
     path,
-    signErr: signErr?.message
+    error: error?.message
   });
-  return { url: null, error: signErr || new Error('Could not derive display URL') };
+  return { url: null, error: error || new Error('Could not derive display URL') };
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * Backward-compatible convenience for the default images bucket.
+ * Delegates to getDisplayUrlForBucketAndPath to support caching and fallback logic.
+ */
+// PUBLIC_INTERFACE
+export async function getDisplayUrlForPath(path, opts = {}) {
+  return getDisplayUrlForBucketAndPath(AUCTION_IMAGES_BUCKET, path, opts);
 }
 
 // Backward-compatible export name (previous code expects this):
@@ -255,4 +305,6 @@ export default {
   uploadPublicImageToBucket, // legacy alias points to public-capable flow
   verifyBucketExists,
   checkStorageAccess,
-};
+  getDisplayUrlForBucketAndPath,
+  getDisplayUrlForPath,
+}

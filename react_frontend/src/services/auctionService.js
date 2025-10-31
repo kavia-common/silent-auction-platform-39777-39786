@@ -264,6 +264,9 @@ export async function updateItemImage(eventId, itemId, file) {
   return { data, error: patchErr || null };
 }
 
+/** Items are listed without relying on any image_url persisted in DB.
+ * Rendering components will compute display URLs from image_path via storageService.
+ */
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
   /** List items for an event; image rendering relies on items.image_path exclusively. */

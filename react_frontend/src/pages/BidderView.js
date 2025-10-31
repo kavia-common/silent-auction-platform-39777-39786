@@ -30,7 +30,7 @@ function ItemImageRenderer({ item }) {
     let cancelled = false;
     setFailed(false);
     async function resolve() {
-      const path = disp?.imagePath || item?.image_path || '';
+      const path = (disp?.imagePath || item?.image_path || '').trim();
       if (!path) {
         if (!cancelled) setSrc('');
         return;
