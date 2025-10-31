@@ -564,6 +564,16 @@ export default function HostDashboard() {
         onClose={() => setAddOpen(false)}
         eventId={eventId}
         onAdded={async ({ image_path, image_url }) => {
+          // Dev-safe diagnostic: log whether image_url is present (do not log full URL)
+          if (process.env.NODE_ENV !== 'test') {
+            try {
+              console.info('[host] onAdded received image refs', {
+                has_path: !!image_path,
+                has_url: !!image_url,
+                url_len: image_url ? String(image_url).length : 0
+              });
+            } catch {}
+          }
           // Create a minimal item using the standard form fields and include image_path and image_url when available
           const { error: addErr } = await addItem(eventId, {
             title: form.title.trim() || 'Untitled Item',

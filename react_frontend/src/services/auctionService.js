@@ -217,9 +217,33 @@ export async function addItem(eventId, item, imageFile) {
     ...(item?.image_url ? { image_url: item.image_url } : {}),
   };
 
+  // Dev-safe log of outgoing payload (censor URL)
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      console.info('[auction:addItem] inserting item', {
+        has_image_path: !!payload.image_path,
+        has_image_url: !!payload.image_url,
+        image_url_len: payload.image_url ? String(payload.image_url).length : 0
+      });
+    } catch {}
+  }
+
   // Create item first (so we have id for subsequent upload if needed)
   const insertCall = () => supabase.from('items').insert([payload]).select('*').single();
   const { data: created, error: createErr } = await withShortRetry(insertCall);
+
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      console.info('[auction:addItem] insert result', {
+        ok: !createErr,
+        id: created?.id || null,
+        has_image_path: !!created?.image_path,
+        has_image_url: !!created?.image_url,
+        image_url_len: created?.image_url ? String(created.image_url).length : 0
+      });
+    } catch {}
+  }
+
   if (createErr) return { data: null, error: createErr };
 
   // If a file is provided, upload and persist storage key and image_url (if public)
@@ -227,15 +251,45 @@ export async function addItem(eventId, item, imageFile) {
     const { path, publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
     if (uploadErr) {
       // Keep the item, but surface error to caller
+      if (process.env.NODE_ENV !== 'test') {
+        try {
+          console.warn('[auction:addItem] upload failed after insert', { id: created.id, message: uploadErr.message });
+        } catch {}
+      }
       return { data: created, error: uploadErr };
     }
     const updates = { image_path: path || null };
     if (publicUrl) {
       updates.image_url = publicUrl;
     }
+
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        console.info('[auction:addItem] patching image fields', {
+          id: created.id,
+          has_public_url: !!publicUrl,
+          url_len: publicUrl ? String(publicUrl).length : 0,
+          has_path: !!path
+        });
+      } catch {}
+    }
+
     const { data: updated, error: patchErr } = await withShortRetry(() =>
       supabase.from('items').update(updates).eq('id', created.id).select('*').single()
     );
+
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        console.info('[auction:addItem] patch result', {
+          ok: !patchErr,
+          id: updated?.id || created?.id || null,
+          has_image_path: !!updated?.image_path,
+          has_image_url: !!updated?.image_url,
+          image_url_len: updated?.image_url ? String(updated.image_url).length : 0
+        });
+      } catch {}
+    }
+
     return { data: updated || created, error: patchErr || null };
   }
 
@@ -266,9 +320,34 @@ export async function updateItemImage(eventId, itemId, file) {
   if (publicUrl) {
     updates.image_url = publicUrl;
   }
+
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      console.info('[auction:updateItemImage] patching item image', {
+        itemId,
+        has_public_url: !!publicUrl,
+        url_len: publicUrl ? String(publicUrl).length : 0,
+        has_path: !!path
+      });
+    } catch {}
+  }
+
   const { data, error: patchErr } = await withShortRetry(() =>
     supabase.from('items').update(updates).eq('id', itemId).select('*').single()
   );
+
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      console.info('[auction:updateItemImage] patch result', {
+        ok: !patchErr,
+        id: data?.id || null,
+        has_image_path: !!data?.image_path,
+        has_image_url: !!data?.image_url,
+        image_url_len: data?.image_url ? String(data.image_url).length : 0
+      });
+    } catch {}
+  }
+
   return { data, error: patchErr || null };
 }
 
@@ -296,6 +375,17 @@ export async function listItems(eventId) {
           count: bad.length,
           examples: bad.slice(0, 2).map((b) => ({ id: b.id }))
         });
+      } catch {}
+    }
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const summary = data.slice(0, 10).map((r) => ({
+          id: r.id,
+          has_image_url: !!r.image_url,
+          image_url_len: r.image_url ? String(r.image_url).length : 0,
+          has_image_path: !!r.image_path
+        }));
+        console.info('[auction:listItems] sample image fields', { count: data.length, sample: summary });
       } catch {}
     }
   }
