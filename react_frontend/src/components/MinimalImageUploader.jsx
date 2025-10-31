@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { uploadPublicOrPrivateItemImage, getDisplayUrlForPath } from '../services/storageService';
+import { getDisplayUrlForPath } from '../services/storageService';
 import { updateItemImage } from '../services/auctionService';
 
 /**
@@ -28,25 +28,20 @@ export default function MinimalImageUploader({ eventId, itemId, onUploaded }) {
     }
     setBusy(true);
     try {
-      const { path, error: upErr } = await uploadPublicOrPrivateItemImage(file);
-      if (upErr) {
-        setError(upErr.message || 'Upload failed');
-        setBusy(false);
-        return;
-      }
-      // Persist image_path
-      const { error: patchErr } = await updateItemImage(eventId, itemId, file);
+      // Single call handles upload + DB persistence of image_path and image_url
+      const { data, error: patchErr } = await updateItemImage(eventId, itemId, file);
       if (patchErr) {
-        setError(patchErr.message || 'Failed to save image');
+        setError(patchErr.message || 'Failed to upload/save image');
         setBusy(false);
         return;
       }
-      // Optional: resolve display URL once saved
+      // Resolve display URL from the saved path if present; if image_url exists, preview will still work from Item components
+      const path = data?.image_path || '';
       if (path) {
         const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
         if (url) setPreview(url);
       }
-      if (typeof onUploaded === 'function') onUploaded({ image_path: path });
+      if (typeof onUploaded === 'function') onUploaded({ image_path: path, image_url: data?.image_url || '' });
     } catch (ex) {
       setError(ex?.message || 'Unexpected error');
     } finally {

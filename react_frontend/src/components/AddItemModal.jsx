@@ -90,12 +90,12 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
     setBusy(true);
     try {
       // Upload and capture storage key (path). Do not surface public URL in UI.
-      const { path, error: uploadErr } = await uploadPublicImageToBucket(eventId, 'new', file);
+      const { path, publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, 'new', file);
       if (uploadErr) {
         setError(uploadErr.message || 'Failed to upload image.');
         return;
       }
-      if (typeof onAdded === 'function') onAdded({ image_path: path || '' });
+      if (typeof onAdded === 'function') onAdded({ image_path: path || '', image_url: publicUrl || '' });
       // Close after success to encourage creating the item immediately with image_path
       if (typeof onClose === 'function') onClose();
     } catch (ex) {
