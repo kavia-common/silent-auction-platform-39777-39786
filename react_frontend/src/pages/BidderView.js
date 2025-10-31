@@ -18,8 +18,8 @@ import { getDisplayUrlForPath } from '../services/storageService';
 
 /**
  * PUBLIC_INTERFACE
- * Resolve an item's image URL for display in bidder view using items.image_path.
- * This helper logs minimal diagnostics and returns a placeholder state when no image is available.
+ * Resolve an item's image URL for display in bidder view using image_url first, then image_path fallback.
+ * No raw URL logging in UI.
  */
 function ItemImageRenderer({ item }) {
   const disp = getItemDisplayFields(item);
@@ -30,16 +30,21 @@ function ItemImageRenderer({ item }) {
     let cancelled = false;
     setFailed(false);
     async function resolve() {
+      // Prefer public image_url from DB
+      const direct = (disp?.imageUrl || item?.image_url || '').trim();
+      if (direct) {
+        if (!cancelled) setSrc(direct);
+        return;
+      }
+
       const path = (disp?.imagePath || item?.image_path || '').trim();
       if (!path) {
         if (!cancelled) setSrc('');
         return;
       }
       try {
-        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
-        if (error || !url) {
-          // eslint-disable-next-line no-console
-          console.warn('[bidder] Image URL resolution failed', { itemId: item?.id, image_path: path, message: error?.message });
+        const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+        if (!url) {
           if (!cancelled) {
             setSrc('');
             setFailed(true);
@@ -47,9 +52,7 @@ function ItemImageRenderer({ item }) {
         } else if (!cancelled) {
           setSrc(url);
         }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('[bidder] Exception resolving image URL', { itemId: item?.id, image_path: path, message: e?.message });
+      } catch {
         if (!cancelled) {
           setSrc('');
           setFailed(true);
@@ -59,7 +62,7 @@ function ItemImageRenderer({ item }) {
     resolve();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disp?.imagePath, item?.image_path, item?.id]);
+  }, [disp?.imageUrl, disp?.imagePath, item?.image_url, item?.image_path, item?.id]);
 
   if (src) {
     return (
@@ -67,10 +70,8 @@ function ItemImageRenderer({ item }) {
         src={src}
         alt={disp.title ? `${disp.title} image` : 'Item image'}
         style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
-        onError={(e) => { 
-          e.currentTarget.style.display = 'none'; 
-          // eslint-disable-next-line no-console
-          console.warn('[bidder] <img> failed to load', { itemId: item?.id, image_path: disp?.imagePath || item?.image_path });
+        onError={(e) => {
+          e.currentTarget.style.display = 'none';
         }}
       />
     );
@@ -147,24 +148,6 @@ export default function BidderView() {
     [items]
   );
 
-  // Dev-time: log first item's image_path and resolved URL to verify format/bucket
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'production') return;
-    const sample = items.find(i => i?.image_path) || null;
-    if (!sample) return;
-    const path = sample.image_path;
-    (async () => {
-      try {
-        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 60 });
-        // eslint-disable-next-line no-console
-        console.info('[bidder][probe] sample image resolution', { itemId: sample.id, image_path: path, url: !!url, error: error?.message });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('[bidder][probe] exception resolving sample image', { message: e?.message });
-      }
-    })();
-  }, [items]);
-
   const auctionStatus = getNormalizedEventStatus(eventRow);
   const isClosed = auctionStatus === 'closed';
 
@@ -200,18 +183,6 @@ export default function BidderView() {
       return;
     }
     const list = data || [];
-    // quick diagnostics: how many items have image_path?
-    if (process.env.NODE_ENV !== 'test') {
-      try {
-        const counts = {
-          withImage: list.filter(i => i?.image_path).length,
-          withoutImage: list.filter(i => !i?.image_path).length
-        };
-        if (counts.withoutImage > 0) {
-          console.info('[bidder] Items loaded', { total: list.length, ...counts });
-        }
-      } catch {}
-    }
     setItems(list);
     list.forEach((it) => loadHighBid(it.id));
     attachBidRealtime(list);

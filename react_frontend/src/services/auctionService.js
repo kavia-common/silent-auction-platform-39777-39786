@@ -203,20 +203,18 @@ async function tryUpdateItemImagePath(itemId, imagePath) {
   return { data, error };
 }
 
-// PUBLIC_INTERFACE
+/**
+ * Attempt to persist both image_path and a public image_url if available.
+ * The image_url is generated via storageService.getPublicUrl at upload time.
+ */
 export async function addItem(eventId, item, imageFile) {
-  /**
-   * Add new item to an event.
-   * Stores only storage object path in items.image_path.
-   * Backward-compat: if item.image_url provided, we attempt to persist to legacy item_image_url as best-effort.
-   */
   const payload = {
     event_id: eventId,
     title: item.title,
     description: item.description || '',
     starting_bid: Number(item.starting_bid || 0),
-    // Prefer including image_path at insert if caller supplied it directly
     ...(item?.image_path ? { image_path: item.image_path } : {}),
+    ...(item?.image_url ? { image_url: item.image_url } : {}),
   };
 
   // Create item first (so we have id for subsequent upload if needed)
@@ -224,17 +222,20 @@ export async function addItem(eventId, item, imageFile) {
   const { data: created, error: createErr } = await withShortRetry(insertCall);
   if (createErr) return { data: null, error: createErr };
 
-  // Legacy URL fields are no longer persisted. We standardize on image_path only.
-  // Intentionally ignoring item.image_url or item.item_image_url if provided.
-
-  // If a file is provided, upload and persist storage key to image_path
+  // If a file is provided, upload and persist storage key and image_url (if public)
   if (imageFile) {
-    const { path, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
+    const { path, publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, created.id, imageFile);
     if (uploadErr) {
       // Keep the item, but surface error to caller
       return { data: created, error: uploadErr };
     }
-    const { data: updated, error: patchErr } = await tryUpdateItemImagePath(created.id, path);
+    const updates = { image_path: path || null };
+    if (publicUrl) {
+      updates.image_url = publicUrl;
+    }
+    const { data: updated, error: patchErr } = await withShortRetry(() =>
+      supabase.from('items').update(updates).eq('id', created.id).select('*').single()
+    );
     return { data: updated || created, error: patchErr || null };
   }
 
@@ -251,42 +252,49 @@ export async function addItemWithImage(eventId, item, imageFile) {
 
 /**
  * PUBLIC_INTERFACE
- * Update only the image for an existing item: uploads file and patches items.item_image_url.
+ * Update only the image for an existing item: uploads file and patches items.image_path and items.image_url (if public).
  */
 export async function updateItemImage(eventId, itemId, file) {
-  /** Uploads an image for an existing item and persists items.image_path without changing other fields. */
+  /** Uploads an image for an existing item and persists items.image_path and image_url (if public). */
   if (!eventId || !itemId || !file) {
     return { data: null, error: new Error('Missing parameters') };
   }
-  const { path, error: uploadErr } = await uploadPublicImageToBucket(eventId, itemId, file);
+  const { path, publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, itemId, file);
   if (uploadErr) return { data: null, error: uploadErr };
-  const { data, error: patchErr } = await tryUpdateItemImagePath(itemId, path);
+
+  const updates = { image_path: path || null };
+  if (publicUrl) {
+    updates.image_url = publicUrl;
+  }
+  const { data, error: patchErr } = await withShortRetry(() =>
+    supabase.from('items').update(updates).eq('id', itemId).select('*').single()
+  );
   return { data, error: patchErr || null };
 }
 
-/** Items are listed without relying on any image_url persisted in DB.
- * Rendering components will compute display URLs from image_path via storageService.
+/** Items are listed selecting image_url and image_path.
+ * Rendering components will use image_url first, then compute from image_path via storageService.
  */
 // PUBLIC_INTERFACE
 export async function listItems(eventId) {
-  /** List items for an event; image rendering relies on items.image_path exclusively. */
+  /** List items for an event; includes image_url and image_path. */
   const call = () =>
     supabase
       .from('items')
-      // Explicit columns; do not select non-existent legacy 'name' field to prevent runtime errors.
-      .select('id, event_id, title, description, starting_bid, created_at, image_path')
+      // Select image_url alongside image_path; UI prefers image_url.
+      .select('id, event_id, title, description, starting_bid, created_at, image_path, image_url')
       .eq('event_id', eventId)
       .order('created_at', { ascending: true });
   const { data, error } = await withShortRetry(call);
 
-  // Console-safe diagnostics for potential image_path mismatches
+  // Console-safe diagnostics for potential image_path mismatches (do not print raw URLs to UI)
   if (!error && Array.isArray(data)) {
     const bad = data.filter((it) => it.image_path && typeof it.image_path === 'string' && it.image_path.startsWith('http'));
     if (bad.length > 0 && process.env.NODE_ENV !== 'test') {
       try {
         console.warn('[auction] Detected items with full URLs in image_path; expected storage object path (e.g., folder/key.jpg)', {
           count: bad.length,
-          examples: bad.slice(0, 2).map((b) => ({ id: b.id, image_path: b.image_path }))
+          examples: bad.slice(0, 2).map((b) => ({ id: b.id }))
         });
       } catch {}
     }
@@ -667,23 +675,26 @@ export function subscribeToBidsForEvent(eventId, onChange) {
 }
 
 export function getItemDisplayFields(item) {
-  /** Returns normalized fields for displaying an item using image_path only. */
-  // Primary schema column is 'title'. Some older datasets may still have 'name'; use it only as a display fallback.
+  /**
+   * Returns normalized fields for displaying an item.
+   * Prefer server-stored image_url (public) when present; otherwise use image_path fallback.
+   */
   const title = (item?.title && String(item.title).trim()) ? item.title : (item?.name || '');
+  const imageUrl = (typeof item?.image_url === 'string' && item.image_url.trim()) ? item.image_url.trim() : '';
   const imagePath = item?.image_path || '';
 
-  // Log potential formatting issues to help diagnose: missing folder or bucket prefix confusion
-  if (imagePath && process.env.NODE_ENV !== 'test') {
+  // Avoid logging raw URLs; only minimal diagnostics for obvious path mistakes.
+  if (!imageUrl && imagePath && process.env.NODE_ENV !== 'test') {
     try {
       if (/^https?:\/\//i.test(imagePath)) {
-        console.warn('[auction] image_path appears to be a full URL; expected storage key path', { id: item?.id, image_path: imagePath });
+        console.warn('[auction] image_path appears to be a full URL; expected storage key path', { id: item?.id });
       } else if (imagePath.startsWith('the-auction-images/')) {
-        console.warn('[auction] image_path contains bucket prefix; expected object path without bucket name', { id: item?.id, image_path: imagePath });
+        console.warn('[auction] image_path contains bucket prefix; expected object path without bucket name', { id: item?.id });
       }
     } catch {}
   }
 
-  return { title, imagePath };
+  return { title, imageUrl, imagePath };
 }
 
 export default {

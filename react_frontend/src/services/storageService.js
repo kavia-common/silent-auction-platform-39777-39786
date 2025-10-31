@@ -152,7 +152,11 @@ function uuidv4() {
  * - If no session, fall back to 'public/' prefix: public/<uuid>.<ext>
  * - Returns { path, publicUrl, error }
  */
-// PUBLIC_INTERFACE
+/**
+ * Attempt to persist and return a public URL when bucket allows it. If not available,
+ * we will try to mint a signed URL (short TTL) for immediate preview only; callers should
+ * not store signed URLs, so we return publicUrl=null in that case and rely on path fallback.
+ */
 export async function uploadPublicOrPrivateItemImage(file) {
   if (!file) return { path: null, publicUrl: null, error: new Error('No file provided') };
 
@@ -183,11 +187,24 @@ export async function uploadPublicOrPrivateItemImage(file) {
     return { path: null, publicUrl: null, error: new Error(uploadErr.message || 'Upload failed') };
   }
 
-  // Attempt to compute public URL
-  const { data: pub } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(key);
-  const publicUrl = pub?.publicUrl || null;
+  // Attempt to compute public URL for persistence
+  let publicUrl = null;
+  try {
+    const { data: pub } = supabase.storage.from(AUCTION_IMAGES_BUCKET).getPublicUrl(key);
+    publicUrl = pub?.publicUrl || null;
+    if (!publicUrl) {
+      // As a minimal fallback for preview only (do not persist), try a short-lived signed URL.
+      const { data: signed } = await supabase.storage.from(AUCTION_IMAGES_BUCKET).createSignedUrl(key, 300);
+      if (signed?.signedUrl) {
+        // Cache signed for display resolution speed, but do not return it as publicUrl.
+        _setCachedDisplayUrl(AUCTION_IMAGES_BUCKET, key, signed.signedUrl, 300);
+      }
+    }
+  } catch {
+    // ignore; leave publicUrl null
+  }
 
-  return { path: key, publicUrl, error: null };
+  return { path: key, publicUrl: publicUrl || null, error: null };
 }
 
 /**

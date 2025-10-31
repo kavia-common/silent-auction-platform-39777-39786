@@ -11,16 +11,19 @@ function ItemImage({ item, displayTitle }) {
     let cancelled = false;
     setFailed(false);
     async function run() {
+      const direct = (item?.image_url || '').trim();
+      if (direct) {
+        if (!cancelled) setSrc(direct);
+        return;
+      }
       const path = (item?.image_path || '').trim();
       if (!path) {
         if (!cancelled) setSrc('');
         return;
       }
       try {
-        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
-        if (error || !url) {
-          // eslint-disable-next-line no-console
-          console.warn('[item-card] Image URL resolution failed', { itemId: item?.id, image_path: path, message: error?.message });
+        const { url } = await getDisplayUrlForPath(path, { expiresIn: 3600 });
+        if (!url) {
           if (!cancelled) {
             setSrc('');
             setFailed(true);
@@ -28,9 +31,7 @@ function ItemImage({ item, displayTitle }) {
         } else if (!cancelled) {
           setSrc(url);
         }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('[item-card] Exception resolving image URL', { itemId: item?.id, image_path: path, message: e?.message });
+      } catch {
         if (!cancelled) {
           setSrc('');
           setFailed(true);
@@ -39,7 +40,7 @@ function ItemImage({ item, displayTitle }) {
     }
     run();
     return () => { cancelled = true; };
-  }, [item?.id, item?.image_path]);
+  }, [item?.id, item?.image_path, item?.image_url]);
 
   if (src) {
     return (
@@ -48,9 +49,7 @@ function ItemImage({ item, displayTitle }) {
         alt={displayTitle ? `${displayTitle} image` : 'Item image'}
         style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8 }}
         onError={(e) => { 
-          e.currentTarget.style.display = 'none'; 
-          // eslint-disable-next-line no-console
-          console.warn('[item-card] <img> failed to load', { itemId: item?.id, image_path: item?.image_path });
+          e.currentTarget.style.display = 'none';
         }}
       />
     );
