@@ -213,11 +213,12 @@ export async function addItem(eventId, item, imageFile) {
     title: item.title,
     description: item.description || '',
     starting_bid: Number(item.starting_bid || 0),
+    // Force include any provided image refs from caller (AddItemModal passes both)
     ...(item?.image_path ? { image_path: item.image_path } : {}),
     ...(item?.image_url ? { image_url: item.image_url } : {}),
   };
 
-  // Dev-safe log of outgoing payload (censor URL)
+  // Dev-safe log of outgoing payload (no raw URL)
   if (process.env.NODE_ENV !== 'test') {
     try {
       console.info('[auction:addItem] inserting item', {
@@ -259,9 +260,7 @@ export async function addItem(eventId, item, imageFile) {
       return { data: created, error: uploadErr };
     }
     const updates = { image_path: path || null };
-    if (publicUrl) {
-      updates.image_url = publicUrl;
-    }
+    if (publicUrl) updates.image_url = publicUrl;
 
     if (process.env.NODE_ENV !== 'test') {
       try {
@@ -290,7 +289,49 @@ export async function addItem(eventId, item, imageFile) {
       } catch {}
     }
 
+    // Temporary hard update fallback: if server response still lacks image_url but we have it client-side, force update
+    if (!patchErr && updated && !updated.image_url && updates.image_url) {
+      try {
+        const { data: forced, error: forceErr } = await withShortRetry(() =>
+          supabase.from('items').update({ image_url: updates.image_url }).eq('id', created.id).select('*').single()
+        );
+        if (process.env.NODE_ENV !== 'test') {
+          try {
+            console.info('[auction:addItem] forced image_url update', {
+              ok: !forceErr,
+              id: forced?.id || created.id,
+              has_image_url: !!forced?.image_url
+            });
+          } catch {}
+        }
+        return { data: forced || updated, error: forceErr || null };
+      } catch (e) {
+        // swallow; return the best we have
+      }
+    }
+
     return { data: updated || created, error: patchErr || null };
+  }
+
+  // No image file but caller may have passed image_url (pre-upload via AddItemModal). If DB dropped it, try a fallback update.
+  if (payload.image_url && created && !created.image_url) {
+    try {
+      const { data: forced, error: forceErr } = await withShortRetry(() =>
+        supabase.from('items').update({ image_url: payload.image_url }).eq('id', created.id).select('*').single()
+      );
+      if (process.env.NODE_ENV !== 'test') {
+        try {
+          console.info('[auction:addItem] forced image_url update (no file path case)', {
+            ok: !forceErr,
+            id: forced?.id || created.id,
+            has_image_url: !!forced?.image_url
+          });
+        } catch {}
+      }
+      return { data: forced || created, error: forceErr || null };
+    } catch {
+      // continue to return created
+    }
   }
 
   return { data: created, error: null };
@@ -317,9 +358,7 @@ export async function updateItemImage(eventId, itemId, file) {
   if (uploadErr) return { data: null, error: uploadErr };
 
   const updates = { image_path: path || null };
-  if (publicUrl) {
-    updates.image_url = publicUrl;
-  }
+  if (publicUrl) updates.image_url = publicUrl;
 
   if (process.env.NODE_ENV !== 'test') {
     try {
@@ -332,6 +371,7 @@ export async function updateItemImage(eventId, itemId, file) {
     } catch {}
   }
 
+  // Immediately persist both image_path and image_url
   const { data, error: patchErr } = await withShortRetry(() =>
     supabase.from('items').update(updates).eq('id', itemId).select('*').single()
   );
@@ -346,6 +386,23 @@ export async function updateItemImage(eventId, itemId, file) {
         image_url_len: data?.image_url ? String(data.image_url).length : 0
       });
     } catch {}
+  }
+
+  // Fallback hard update if image_url not reflected but we have it
+  if (!patchErr && data && !data.image_url && updates.image_url) {
+    const { data: forced, error: forceErr } = await withShortRetry(() =>
+      supabase.from('items').update({ image_url: updates.image_url }).eq('id', itemId).select('*').single()
+    );
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        console.info('[auction:updateItemImage] forced image_url update', {
+          ok: !forceErr,
+          id: forced?.id || itemId,
+          has_image_url: !!forced?.image_url
+        });
+      } catch {}
+    }
+    return { data: forced || data, error: forceErr || null };
   }
 
   return { data, error: patchErr || null };

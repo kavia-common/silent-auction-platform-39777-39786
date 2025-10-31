@@ -89,12 +89,13 @@ export default function AddItemModal({ open, onClose, eventId, onAdded }) {
 
     setBusy(true);
     try {
-      // Upload and capture storage key (path). Do not surface public URL in UI.
+      // Upload and capture storage key (path) and any public URL minted by storage (when bucket is public).
       const { path, publicUrl, error: uploadErr } = await uploadPublicImageToBucket(eventId, 'new', file);
       if (uploadErr) {
         setError(uploadErr.message || 'Failed to upload image.');
         return;
       }
+      // Important: pass both image_path and image_url so HostDashboard.addItem includes both in initial insert payload.
       if (typeof onAdded === 'function') onAdded({ image_path: path || '', image_url: publicUrl || '' });
       // Close after success to encourage creating the item immediately with image_path
       if (typeof onClose === 'function') onClose();

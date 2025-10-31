@@ -30,6 +30,10 @@ create table if not exists public.items (
   title text not null,
   description text default '',
   starting_bid numeric default 0,
+  -- storage object key (e.g., "public/uuid.jpg" or "<userId>/uuid.png")
+  image_path text,
+  -- public URL resolved from storage (for public buckets). Prefer UI to use this when present.
+  image_url text,
   created_at timestamptz default now()
 );
 create index if not exists items_event_id_idx on public.items(event_id);
@@ -69,6 +73,10 @@ begin
   end if;
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='items' and policyname='items_insert_anon') then
     create policy "items_insert_anon" on public.items for insert with check (true);
+  end if;
+  -- Allow updates by anon for demo (includes image_path and image_url fields). Tighten for production.
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='items' and policyname='items_update_anon') then
+    create policy "items_update_anon" on public.items for update using (true) with check (true);
   end if;
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='items' and policyname='items_delete_anon') then
     create policy "items_delete_anon" on public.items for delete using (true);

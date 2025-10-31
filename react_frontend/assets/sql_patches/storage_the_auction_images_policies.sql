@@ -126,8 +126,10 @@ begin
 end
 $pol$;
 
--- Note: If you intend to allow anonymous inserts (e.g., unauthenticated uploads),
--- add the following policy. Currently disabled by requirement:
+-- Note: If you intend to allow anonymous inserts (e.g., unauthenticated uploads from hosts without auth),
+-- you must add a policy like below; otherwise uploads require an authenticated session.
+-- This app currently avoids requiring auth by uploading to a bucket that permits public inserts or by using an authenticated host.
+-- Uncomment only if you understand the security implications:
 -- create policy "Anonymous insert objects for the-auction-images"
 --   on storage.objects for insert
 --   to anon
