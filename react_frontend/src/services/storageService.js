@@ -215,34 +215,76 @@ export async function getSignedImageUrl(path, expiresIn = 3600) {
  * - Signed URLs are cached with a TTL equal to expiresIn seconds.
  * Returns { url, error } where url is safe to use in <img src>.
  */
+/**
+ * Normalize various path formats into { bucket, objectPath }:
+ * - Accepts "bucket/object" or just "object".
+ * - Strips leading slashes.
+ * - If an http(s) URL is mistakenly stored, return it directly as a url bypass.
+ */
+function normalizeBucketAndPath(inputBucket, rawPath) {
+  let bucket = inputBucket || AUCTION_IMAGES_BUCKET;
+  let path = (rawPath || '').trim();
+
+  if (!path) return { bucket, objectPath: '', directUrl: '' };
+
+  // Strip leading slash
+  path = path.replace(/^\/+/, '');
+
+  // If full URL accidentally stored, pass it through as direct url
+  if (/^https?:\/\//i.test(path)) {
+    return { bucket, objectPath: '', directUrl: path };
+  }
+
+  // If path starts with "<bucket>/", split and use the detected bucket
+  const m = path.match(/^([^/]+)\/(.+)$/);
+  if (m) {
+    const possibleBucket = m[1];
+    const rest = m[2];
+    // If matches our known bucket name, switch to that and use remainder as object path
+    if (possibleBucket === AUCTION_IMAGES_BUCKET) {
+      bucket = possibleBucket;
+      path = rest;
+    }
+  }
+
+  return { bucket, objectPath: path, directUrl: '' };
+}
+
 // PUBLIC_INTERFACE
 export async function getDisplayUrlForBucketAndPath(bucket, path, opts = {}) {
   const expiresIn = Number(opts.expiresIn || 3600);
   if (!path) return { url: null, error: new Error('Path is required') };
-  const targetBucket = bucket || AUCTION_IMAGES_BUCKET;
+
+  const norm = normalizeBucketAndPath(bucket, path);
+  // If a direct URL was stored, return it as-is
+  if (norm.directUrl) {
+    return { url: norm.directUrl, error: null };
+  }
+  const targetBucket = norm.bucket || AUCTION_IMAGES_BUCKET;
+  const objectPath = norm.objectPath;
 
   // Cache hit?
-  const cached = _getCachedDisplayUrl(targetBucket, path);
+  const cached = _getCachedDisplayUrl(targetBucket, objectPath);
   if (cached) return { url: cached, error: null };
 
   // Prefer public URL for public-read bucket. This does not require auth/session.
   try {
-    const { data } = supabase.storage.from(targetBucket).getPublicUrl(path);
+    const { data } = supabase.storage.from(targetBucket).getPublicUrl(objectPath);
     const publicUrl = data?.publicUrl || null;
     if (publicUrl) {
       // cache public url indefinitely (no expiry)
-      _setCachedDisplayUrl(targetBucket, path, publicUrl, 0);
+      _setCachedDisplayUrl(targetBucket, objectPath, publicUrl, 0);
       return { url: publicUrl, error: null };
     }
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn('[storage] getPublicUrl threw exception; will try signed', { bucket: targetBucket, path, message: e?.message });
+    console.warn('[storage] getPublicUrl threw exception; will try signed', { bucket: targetBucket, path: objectPath, message: e?.message });
   }
 
   // If public URL isn't available (e.g., bucket is private), try a signed URL
-  const { data, error } = await supabase.storage.from(targetBucket).createSignedUrl(path, expiresIn);
+  const { data, error } = await supabase.storage.from(targetBucket).createSignedUrl(objectPath, expiresIn);
   if (!error && data?.signedUrl) {
-    _setCachedDisplayUrl(targetBucket, path, data.signedUrl, expiresIn);
+    _setCachedDisplayUrl(targetBucket, objectPath, data.signedUrl, expiresIn);
     return { url: data.signedUrl, error: null };
   }
 
@@ -250,7 +292,7 @@ export async function getDisplayUrlForBucketAndPath(bucket, path, opts = {}) {
   // eslint-disable-next-line no-console
   console.warn('[storage] Failed to resolve display URL for image path', {
     bucket: targetBucket,
-    path,
+    path: objectPath,
     error: error?.message
   });
   return { url: null, error: error || new Error('Could not derive display URL') };

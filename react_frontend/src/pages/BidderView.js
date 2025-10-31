@@ -147,6 +147,24 @@ export default function BidderView() {
     [items]
   );
 
+  // Dev-time: log first item's image_path and resolved URL to verify format/bucket
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    const sample = items.find(i => i?.image_path) || null;
+    if (!sample) return;
+    const path = sample.image_path;
+    (async () => {
+      try {
+        const { url, error } = await getDisplayUrlForPath(path, { expiresIn: 60 });
+        // eslint-disable-next-line no-console
+        console.info('[bidder][probe] sample image resolution', { itemId: sample.id, image_path: path, url: !!url, error: error?.message });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[bidder][probe] exception resolving sample image', { message: e?.message });
+      }
+    })();
+  }, [items]);
+
   const auctionStatus = getNormalizedEventStatus(eventRow);
   const isClosed = auctionStatus === 'closed';
 
